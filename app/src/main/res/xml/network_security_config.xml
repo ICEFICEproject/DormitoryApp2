@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Разрешаем HTTP (cleartext) для локального сервера общежития и локальных адресов -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">172.17.0.21</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    </domain-config>
+    <!-- Также разрешаем cleartext для любого IP в локальной сети, если адрес сервера изменен в настройках -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
