@@ -29,7 +29,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -54,7 +53,6 @@ import androidx.compose.ui.unit.sp
 import com.example.dormitoryapp.data.CleanlinessRecord
 import com.example.dormitoryapp.data.DormRoom
 import com.example.dormitoryapp.data.FloorDutyScheduleRecord
-import com.example.dormitoryapp.data.HeadcountRecord
 import com.example.dormitoryapp.data.KitchenDutyRecord
 import com.example.dormitoryapp.data.RemoteStaffUser
 import com.example.dormitoryapp.data.SilenceIncidentRecord
@@ -73,19 +71,15 @@ fun DashboardScreen(
     currentRole: StaffRole,
     assignedFloor: Int,
     allRooms: List<DormRoom>,
-    headcountRecords: List<HeadcountRecord>,
     cleanlinessRecords: List<CleanlinessRecord>,
     kitchenDutyRecords: List<KitchenDutyRecord>,
     silenceIncidents: List<SilenceIncidentRecord>,
     floorDutySchedules: List<FloorDutyScheduleRecord> = emptyList(),
     staffUsers: List<RemoteStaffUser> = emptyList(),
     onSaveFloorDutyWeek: (Int, List<FloorDutyScheduleRecord>) -> Unit = { _, _ -> },
-    onNavigateToFloorHeadcount: (Int) -> Unit,
     onOpenShiftSummary: () -> Unit = {}
 ) {
-    val isDeputy = currentRole == StaffRole.DEPUTY_EDUCATOR
     var editingFloor by remember { mutableStateOf<Int?>(null) }
-    var selectedDutyFloor by remember { mutableIntStateOf(assignedFloor) }
 
     LazyColumn(
         modifier = Modifier
@@ -93,214 +87,12 @@ fun DashboardScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        if (isDeputy) {
-            // --- РЕЖИМ ЗАМЕСТИТЕЛЯ ВОСПИТАТЕЛЯ (ВСЕ ЭТАЖИ 2–5) ---
-            val totalNorm = allRooms.sumOf { it.capacity }
-            val totalPresent = headcountRecords.sumOf { it.presentCount }
-            val checkedRoomNumbers = headcountRecords.map { it.roomNumber }.toSet()
-            val normOfCheckedRooms = allRooms.filter { it.roomNumber in checkedRoomNumbers }.sumOf { it.capacity }
-            val totalAbsentInChecked = (normOfCheckedRooms - totalPresent).coerceAtLeast(0)
-
-            val todaySilenceIncidents = silenceIncidents.filter { it.date == selectedDate }
-            val dirtyRoomsCount = cleanlinessRecords.count { it.status != "Чисто" }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Общая сводка общежития за $selectedDate",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Проверено комнат: ${checkedRoomNumbers.size} из ${allRooms.size}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            SummaryStatBox(
-                                label = "По норме (всего)",
-                                value = "$totalNorm",
-                                subLabel = "проверенных: $normOfCheckedRooms",
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            SummaryStatBox(
-                                label = "Ночуют (Факт)",
-                                value = "$totalPresent",
-                                subLabel = "в общежитии",
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            SummaryStatBox(
-                                label = "Отсутствуют",
-                                value = "$totalAbsentInChecked",
-                                subLabel = "Норма − Факт",
-                                highlightRed = totalAbsentInChecked > 0,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Карточка «Итоги 15-дневной смены (Антирейтинг)»
-            item {
-                ShiftSummaryBannerCard(
-                    title = "Итоги 15-дневной смены",
-                    subtitle = "Антирейтинг комнат по чистоте и тишине, образцовые комнаты и экспорт в Excel",
-                    onClick = onOpenShiftSummary
-                )
-            }
-
-            // График дежурств по этажам (для зам. воспитателя с переключателем этажей)
-            item {
-                val dutyFloorSchedule = floorDutySchedules.filter { it.floor == selectedDutyFloor }
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.CalendarMonth,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "График дежурств сотрудников",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            TextButton(
-                                onClick = { editingFloor = selectedDutyFloor },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Изменить", fontSize = 13.sp)
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        // Переключатель этажей (2, 3, 4, 5 этаж)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            for (f in 2..5) {
-                                val isSelected = f == selectedDutyFloor
-                                Surface(
-                                    onClick = { selectedDutyFloor = f },
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Box(
-                                        modifier = Modifier.padding(vertical = 6.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = "$f этаж",
-                                            fontSize = 12.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        FloorDutyScheduleList(
-                            duties = dutyFloorSchedule
-                        )
-                    }
-                }
-            }
-
-            item {
-                Text(
-                    text = "Расчет численности по всем этажам (2–5)",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            for (floor in 2..5) {
-                item {
-                    FloorSummaryCard(
-                        floor = floor,
-                        allRooms = allRooms,
-                        headcountRecords = headcountRecords,
-                        onClick = { onNavigateToFloorHeadcount(floor) }
-                    )
-                }
-            }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Дисциплина и чистота по общежитию ($selectedDate)",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text("• Проверено комнат на чистоту: ${cleanlinessRecords.size} (с замечаниями: $dirtyRoomsCount)")
-                        Text("• Дежурства по кухням отмечены: ${kitchenDutyRecords.size} из 8 кухонь")
-                        Text("• Нарушений тишины после отбоя: ${todaySilenceIncidents.size}")
-                    }
-                }
-            }
-        } else {
-            // --- РЕЖИМ СОТРУДНИКА ЭТАЖА (ТОЛЬКО ЗАКРЕПЛЕННЫЙ ЭТАЖ) ---
-            val floor = assignedFloor
+        // --- РЕЖИМ ТОЛЬКО ЗАКРЕПЛЕННОГО ЭТАЖА ---
+        val floor = assignedFloor
             val floorRooms = allRooms.filter { it.floor == floor }
-            val floorHeadcount = headcountRecords.filter { it.floor == floor }
             val floorCleanliness = cleanlinessRecords.filter { it.floor == floor }
             val floorKitchens = kitchenDutyRecords.filter { it.floor == floor }
             val floorSilence = silenceIncidents.filter { it.floor == floor && it.date == selectedDate }
-
-            val floorNormTotal = floorRooms.sumOf { it.capacity }
-            val floorPresent = floorHeadcount.sumOf { it.presentCount }
-            val floorCheckedSet = floorHeadcount.map { it.roomNumber }.toSet()
-            val floorNormChecked = floorRooms.filter { it.roomNumber in floorCheckedSet }.sumOf { it.capacity }
-            val floorAbsent = (floorNormChecked - floorPresent).coerceAtLeast(0)
 
             val dirtyFloorRooms = floorCleanliness.filter { it.status != "Чисто" }
             val northDuties = floorKitchens.filter { it.kitchenSide.startsWith("Северная") }
@@ -324,7 +116,7 @@ fun DashboardScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Дата: $selectedDate • Проверено комнат: ${floorCheckedSet.size} из ${floorRooms.size}",
+                            text = "Дата: $selectedDate • Комнат на этаже: ${floorRooms.size}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                         )
@@ -335,34 +127,27 @@ fun DashboardScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             SummaryStatBox(
-                                label = "Норма этажа",
-                                value = "$floorNormTotal",
-                                subLabel = "проверенных: $floorNormChecked",
+                                label = "Чистота",
+                                value = "${floorCleanliness.size}/${floorRooms.size}",
+                                subLabel = "проверено комн.",
                                 modifier = Modifier.weight(1f)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             SummaryStatBox(
-                                label = "Ночуют (Факт)",
-                                value = "$floorPresent",
-                                subLabel = "в комнатах",
+                                label = "Замечания",
+                                value = "${dirtyFloorRooms.size}",
+                                subLabel = "по чистоте",
+                                highlightRed = dirtyFloorRooms.isNotEmpty(),
                                 modifier = Modifier.weight(1f)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             SummaryStatBox(
-                                label = "Отсутствуют",
-                                value = "$floorAbsent",
-                                subLabel = "Норма − Факт",
-                                highlightRed = floorAbsent > 0,
+                                label = "Тишина",
+                                value = "${floorSilence.size}",
+                                subLabel = "нарушений",
+                                highlightRed = floorSilence.isNotEmpty(),
                                 modifier = Modifier.weight(1f)
                             )
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(
-                            onClick = { onNavigateToFloorHeadcount(floor) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Перейти к обходу $floor этажа")
                         }
                     }
                 }
@@ -503,8 +288,7 @@ fun DashboardScreen(
                                 fontWeight = FontWeight.Medium
                             )
                         }
-                        Text("• Нарушений тишины после отбоя: ${floorSilence.size}")
-                    }
+                    Text("• Нарушений тишины после отбоя: ${floorSilence.size}")
                 }
             }
         }
@@ -522,80 +306,6 @@ fun DashboardScreen(
                 onSaveFloorDutyWeek(floorToEdit, updatedList)
             }
         )
-    }
-}
-
-@Composable
-private fun FloorSummaryCard(
-    floor: Int,
-    allRooms: List<DormRoom>,
-    headcountRecords: List<HeadcountRecord>,
-    onClick: () -> Unit
-) {
-    val floorRooms = allRooms.filter { it.floor == floor }
-    val floorRecords = headcountRecords.filter { it.floor == floor }
-    val floorNormTotal = floorRooms.sumOf { it.capacity }
-    val floorPresent = floorRecords.sumOf { it.presentCount }
-    val floorCheckedSet = floorRecords.map { it.roomNumber }.toSet()
-    val floorNormChecked = floorRooms.filter { it.roomNumber in floorCheckedSet }.sumOf { it.capacity }
-    val floorAbsent = (floorNormChecked - floorPresent).coerceAtLeast(0)
-
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "$floor этаж (${floor}00–${floor}34)",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
-                )
-                Surface(
-                    color = if (floorRecords.size == floorRooms.size && floorRooms.isNotEmpty())
-                        Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = "Обход: ${floorRecords.size}/${floorRooms.size} комн.",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        fontSize = 12.sp,
-                        color = if (floorRecords.size == floorRooms.size && floorRooms.isNotEmpty())
-                            Color(0xFF2E7D32) else Color(0xFFE65100),
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            HorizontalDivider()
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Штат этажа: $floorNormTotal чел.", fontSize = 13.sp)
-                Text(
-                    "Ночуют: $floorPresent чел.",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    "Уехали/Отс.: $floorAbsent чел.",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (floorAbsent > 0) Color(0xFFC62828) else Color(0xFF2E7D32)
-                )
-            }
-        }
     }
 }
 

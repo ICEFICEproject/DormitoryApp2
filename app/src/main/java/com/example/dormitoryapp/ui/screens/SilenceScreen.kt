@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.dormitoryapp.data.SilenceIncidentRecord
 import com.example.dormitoryapp.data.StaffRole
+import com.example.dormitoryapp.ui.theme.LocalIsDarkTheme
 import java.time.LocalDate
 
 /**
@@ -75,21 +76,18 @@ fun SilenceScreen(
     onFinishQuietSession: (() -> Unit)? = null,
     onCancelQuietSession: (() -> Unit)? = null
 ) {
-    val isDeputy = currentRole == StaffRole.DEPUTY_EDUCATOR
-    var floorFilter by remember(assignedFloor, isDeputy) {
-        mutableIntStateOf(if (isDeputy) 0 else assignedFloor)
-    }
     var showAddDialog by remember { mutableStateOf(false) }
 
     var roomInput by remember(assignedFloor) { mutableStateOf("${assignedFloor}00") }
     var selectedType by remember { mutableStateOf("Шум после отбоя") }
     var commentInput by remember { mutableStateOf("") }
 
-    // Замечания по тишине отображаются СТРОГО для выбранной в календаре даты
-    val dateIncidents = remember(incidents, selectedDate) {
-        incidents.filter { it.date == selectedDate }
+    val isDark = LocalIsDarkTheme.current
+
+    // Замечания по тишине отображаются СТРОГО для выбранной в календаре даты и закрепленного этажа
+    val filteredIncidents = remember(incidents, selectedDate, assignedFloor) {
+        incidents.filter { it.date == selectedDate && it.floor == assignedFloor }
     }
-    val filteredIncidents = if (floorFilter == 0) dateIncidents else dateIncidents.filter { it.floor == floorFilter }
 
     Scaffold(
         floatingActionButton = {
@@ -101,7 +99,7 @@ fun SilenceScreen(
                     },
                     icon = { Icon(Icons.Default.Add, contentDescription = null) },
                     text = {
-                        Text(if (isDeputy) "Зафиксировать шум" else "Зафиксировать шум ($assignedFloor эт.)")
+                        Text("Зафиксировать шум ($assignedFloor эт.)")
                     }
                 )
             }
@@ -113,27 +111,6 @@ fun SilenceScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 14.dp, vertical = 8.dp)
         ) {
-            // Фильтр этажа
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                FilterChip(
-                    selected = floorFilter == 0,
-                    onClick = { floorFilter = 0 },
-                    label = { Text("Все") }
-                )
-                for (floor in 2..5) {
-                    val isMyFloor = floor == assignedFloor
-                    FilterChip(
-                        selected = floorFilter == floor,
-                        onClick = { floorFilter = floor },
-                        label = { Text(if (isMyFloor) "$floor эт. ★" else "$floor эт.") }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
 
             // Блок управления официальной проверкой тишины (ИС «Цифровое общежитие»)
             if (canEditFloor(assignedFloor) && onStartQuietSession != null) {
@@ -143,7 +120,7 @@ fun SilenceScreen(
                         .padding(vertical = 4.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (quietStartedAt != null) Color(0xFFEDE7F6) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        containerColor = if (quietStartedAt != null) (if (isDark) Color(0xFF2E1B4E) else Color(0xFFEDE7F6)) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                     )
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
@@ -238,13 +215,13 @@ fun SilenceScreen(
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (dateIncidents.isNotEmpty()) {
+                if (filteredIncidents.isNotEmpty()) {
                     Surface(
                         color = Color(0xFFFFCDD2),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
-                            text = "Нарушений: ${dateIncidents.size}",
+                            text = "Нарушений: ${filteredIncidents.size}",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFFC62828),
@@ -282,8 +259,8 @@ fun SilenceScreen(
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
-                                containerColor = Color(0xFFFCE8E6),
-                                contentColor = Color(0xFF181C20)
+                                containerColor = if (isDark) Color(0xFF381C1C) else Color(0xFFFCE8E6),
+                                contentColor = if (isDark) Color(0xFFEEEEEE) else Color(0xFF181C20)
                             ),
                             shape = RoundedCornerShape(12.dp),
                             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -382,9 +359,9 @@ fun SilenceScreen(
             "Повторное нарушение"
         )
 
-        val minFloor = if (isDeputy) 2 else assignedFloor
-        val maxFloor = if (isDeputy) 5 else assignedFloor
-        val floorPrompt = if (isDeputy) "200–534 (комнаты 00–34)" else "${assignedFloor}00–${assignedFloor}34"
+        val minFloor = assignedFloor
+        val maxFloor = assignedFloor
+        val floorPrompt = "${assignedFloor}00–${assignedFloor}34"
         val enteredNum = roomInput.toIntOrNull()
         val floorOfRoom = if (enteredNum != null) enteredNum / 100 else 0
         val numOnFloor = if (enteredNum != null) enteredNum % 100 else -1
@@ -393,10 +370,7 @@ fun SilenceScreen(
         AlertDialog(
             onDismissRequest = { showAddDialog = false },
             title = {
-                Text(
-                    if (isDeputy) "Нарушение тишины (2–5 эт.)"
-                    else "Нарушение тишины ($assignedFloor этаж)"
-                )
+                Text("Нарушение тишины ($assignedFloor этаж)")
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

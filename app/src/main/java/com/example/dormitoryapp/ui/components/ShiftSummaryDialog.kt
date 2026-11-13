@@ -89,14 +89,13 @@ fun ShiftSummaryDialog(
     onDismiss: () -> Unit,
     onSendExcelReport: (summary: ShiftRankingSummary, recipient: ReportService.ReportRecipient) -> Unit
 ) {
-    val isDeputy = currentRole == StaffRole.DEPUTY_EDUCATOR
     var selectedPreset by remember { mutableStateOf(ShiftPreset.FIRST_HALF) }
 
     val initialDates = remember { PenaltyUtils.getShiftDatesForPreset(ShiftPreset.FIRST_HALF) }
     var startDate by remember { mutableStateOf(initialDates.first) }
     var endDate by remember { mutableStateOf(initialDates.second) }
 
-    var selectedFloorFilter by remember { mutableStateOf<Int?>(if (isDeputy) null else assignedFloor) }
+    var selectedFloorFilter by remember(assignedFloor) { mutableStateOf<Int?>(assignedFloor) }
     var showRecipientPicker by remember { mutableStateOf(false) }
 
     val dateError = PenaltyUtils.validateShiftPeriod(startDate, endDate)
@@ -281,42 +280,17 @@ fun ShiftSummaryDialog(
                     )
                 }
 
-                // 3. Фильтр этажей (для Зам. воспитателя)
-                if (isDeputy) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Охват этажей:", fontSize = 12.sp, color = Color.Gray)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            FilterChip(
-                                selected = selectedFloorFilter == null,
-                                onClick = { selectedFloorFilter = null },
-                                label = { Text("Все этажи (2–5)", fontSize = 11.sp) }
-                            )
-                            for (f in 2..5) {
-                                FilterChip(
-                                    selected = selectedFloorFilter == f,
-                                    onClick = { selectedFloorFilter = f },
-                                    label = { Text("$f этаж", fontSize = 11.sp) }
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text(
-                            text = "Показываются данные закрепленного $assignedFloor этажа",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            fontSize = 11.sp,
-                            color = Color.DarkGray
-                        )
-                    }
+                // 3. Фиксированный закрепленный этаж
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        text = "Показываются данные закрепленного $assignedFloor этажа",
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        fontSize = 11.sp,
+                        color = Color.DarkGray
+                    )
                 }
 
                 HorizontalDivider()

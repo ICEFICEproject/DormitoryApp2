@@ -71,6 +71,7 @@ import com.example.dormitoryapp.data.PenaltyPeriod
 import com.example.dormitoryapp.data.PenaltyUtils
 import com.example.dormitoryapp.data.RoomPenaltyStats
 import com.example.dormitoryapp.data.SilenceIncidentRecord
+import com.example.dormitoryapp.ui.theme.LocalIsDarkTheme
 
 /**
  * 5 официальных оценок чистоты комнат.
@@ -98,15 +99,26 @@ private fun gradeActiveColor(grade: String): Color = when (grade) {
 }
 
 /**
- * Мягкий светлый фон карточки комнаты (на котором всегда используется ТЕМНЫЙ текст).
+ * Мягкий фон карточки комнаты (на котором четко виден статус и контрастный текст).
  */
-private fun gradeCardBackgroundColor(grade: String?): Color = when (grade) {
-    "Чисто" -> Color(0xFFE6F4EA)
-    "Немного грязно" -> Color(0xFFFFF8E1)
-    "Умеренно грязно" -> Color(0xFFFFE8D6)
-    "Грязно" -> Color(0xFFFCE8E6)
-    "Очень грязно" -> Color(0xFFF3E5F5)
-    else -> Color.White
+private fun gradeCardBackgroundColor(grade: String?, isDark: Boolean = false): Color = if (isDark) {
+    when (grade) {
+        "Чисто" -> Color(0xFF1B3820)
+        "Немного грязно" -> Color(0xFF382912)
+        "Умеренно грязно" -> Color(0xFF3D2112)
+        "Грязно" -> Color(0xFF401818)
+        "Очень грязно" -> Color(0xFF32143D)
+        else -> Color(0xFF242426)
+    }
+} else {
+    when (grade) {
+        "Чисто" -> Color(0xFFE6F4EA)
+        "Немного грязно" -> Color(0xFFFFF8E1)
+        "Умеренно грязно" -> Color(0xFFFFE8D6)
+        "Грязно" -> Color(0xFFFCE8E6)
+        "Очень грязно" -> Color(0xFFF3E5F5)
+        else -> Color.White
+    }
 }
 
 @Composable
@@ -158,9 +170,9 @@ fun CleanlinessScreen(
         if (selectedTab == 0) {
             RoomCleanlinessSubScreen(
                 selectedDate = selectedDate,
-                selectedFloor = selectedFloor,
+                selectedFloor = assignedFloor,
                 assignedFloor = assignedFloor,
-                canEditThisFloor = canEditFloor(selectedFloor),
+                canEditThisFloor = canEditFloor(assignedFloor),
                 canModifyInspectorRecord = canModifyInspectorRecord,
                 onSelectFloor = onSelectFloor,
                 allRooms = allRooms,
@@ -184,7 +196,7 @@ fun CleanlinessScreen(
             )
         } else {
             KitchenDutiesSubScreen(
-                selectedFloor = selectedFloor,
+                selectedFloor = assignedFloor,
                 assignedFloor = assignedFloor,
                 canEditFloor = canEditFloor,
                 onSelectFloor = onSelectFloor,
@@ -265,27 +277,6 @@ private fun RoomCleanlinessSubScreen(
             .fillMaxSize()
             .padding(horizontal = 14.dp, vertical = 8.dp)
     ) {
-        // Выбор этажа (2–5)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            for (floor in 2..5) {
-                val isMyFloor = floor == assignedFloor
-                FilterChip(
-                    selected = selectedFloor == floor,
-                    onClick = { onSelectFloor(floor) },
-                    label = {
-                        Text(
-                            text = if (isMyFloor) "$floor эт. ★" else "$floor эт.",
-                            fontSize = 12.sp
-                        )
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-
         // Переключатель периода подсчета штрафов (за всё время / месяц / день)
         Row(
             modifier = Modifier
@@ -310,7 +301,6 @@ private fun RoomCleanlinessSubScreen(
         }
 
         if (!canEditThisFloor) {
-            val isOtherFloor = selectedFloor != assignedFloor
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -325,28 +315,16 @@ private fun RoomCleanlinessSubScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFFC62828))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (isOtherFloor) "Только просмотр. Вы закреплены за $assignedFloor этажом."
-                            else "История (только просмотр). Прошлые даты может редактировать только командир этажа.",
-                            fontSize = 12.sp,
-                            color = Color(0xFFB71C1C),
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    if (isOtherFloor) {
-                        TextButton(onClick = { onSelectFloor(assignedFloor) }) {
-                            Text("На $assignedFloor эт.", fontWeight = FontWeight.Bold)
-                        }
-                    }
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFFC62828))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "История (только просмотр). Прошлые даты может редактировать только командир этажа.",
+                        fontSize = 12.sp,
+                        color = Color(0xFFB71C1C),
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
         }
@@ -460,7 +438,8 @@ private fun RoomCleanlinessSubScreen(
         ) {
             itemsIndexed(currentRoomsList, key = { _, room -> room.roomNumber }) { index, room ->
                 val rec = recordMap[room.roomNumber]
-                val cardBg = gradeCardBackgroundColor(rec?.status)
+                val isDark = LocalIsDarkTheme.current
+                val cardBg = gradeCardBackgroundColor(rec?.status, isDark)
                 val isDragging = draggingRoomNumber == room.roomNumber
 
                 Card(
@@ -516,8 +495,8 @@ private fun RoomCleanlinessSubScreen(
                             } else Modifier
                         ),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isDragging) Color(0xFFE3F2FD) else cardBg,
-                        contentColor = DarkTextColor
+                        containerColor = if (isDragging) (if (isDark) Color(0xFF1A334D) else Color(0xFFE3F2FD)) else cardBg,
+                        contentColor = if (isDark) Color(0xFFE6E6E6) else DarkTextColor
                     ),
                     border = if (isDragging) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
                     shape = RoundedCornerShape(12.dp),
@@ -793,18 +772,19 @@ private fun GradeChip(
     enabled: Boolean,
     onClick: () -> Unit
 ) {
+    val isDark = LocalIsDarkTheme.current
     val activeBg = gradeActiveColor(grade)
     FilterChip(
         selected = isSelected,
         enabled = enabled,
         onClick = onClick,
         colors = FilterChipDefaults.filterChipColors(
-            containerColor = Color.White,
-            labelColor = DarkTextColor,
+            containerColor = if (isDark) Color(0xFF2C2C2E) else Color.White,
+            labelColor = if (isDark) Color(0xFFE6E6E6) else DarkTextColor,
             selectedContainerColor = activeBg,
             selectedLabelColor = Color.White,
-            disabledContainerColor = Color(0xFFECEFF1),
-            disabledLabelColor = Color(0xFF455A64),
+            disabledContainerColor = if (isDark) Color(0xFF1E1E1E) else Color(0xFFECEFF1),
+            disabledLabelColor = if (isDark) Color(0xFF888888) else Color(0xFF455A64),
             disabledSelectedContainerColor = activeBg.copy(alpha = 0.75f)
         ),
         label = {
@@ -847,27 +827,6 @@ private fun KitchenDutiesSubScreen(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Выбор этажа (2–5)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            for (floor in 2..5) {
-                val isMyFloor = floor == assignedFloor
-                FilterChip(
-                    selected = selectedFloor == floor,
-                    onClick = { onSelectFloor(floor) },
-                    label = {
-                        Text(
-                            text = if (isMyFloor) "$floor эт. ★" else "$floor эт.",
-                            fontSize = 12.sp
-                        )
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-
         if (!canEditThisFloor) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -881,25 +840,16 @@ private fun KitchenDutiesSubScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFFC62828))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Только просмотр. Вы закреплены за $assignedFloor этажом.",
-                            fontSize = 12.sp,
-                            color = Color(0xFFB71C1C),
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    TextButton(onClick = { onSelectFloor(assignedFloor) }) {
-                        Text("На $assignedFloor эт.", fontWeight = FontWeight.Bold)
-                    }
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFFC62828))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "История (только просмотр). Прошлые даты может редактировать только командир этажа.",
+                        fontSize = 12.sp,
+                        color = Color(0xFFB71C1C),
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
         }
@@ -923,17 +873,26 @@ private fun KitchenDutiesSubScreen(
             val isAnyDirty = washRec?.status == "Не убрано" || trashRec?.status == "Не убрано"
             val isAllClean = hasAny && (washRec == null || washRec.status == "Убрано") && (trashRec == null || trashRec.status == "Убрано")
 
-            val bgColor = when {
-                isAnyDirty -> Color(0xFFFCE8E6)
-                isAllClean -> Color(0xFFE6F4EA)
-                else -> Color.White
+            val isDark = LocalIsDarkTheme.current
+            val bgColor = if (isDark) {
+                when {
+                    isAnyDirty -> Color(0xFF401818)
+                    isAllClean -> Color(0xFF1B3820)
+                    else -> MaterialTheme.colorScheme.surface
+                }
+            } else {
+                when {
+                    isAnyDirty -> Color(0xFFFCE8E6)
+                    isAllClean -> Color(0xFFE6F4EA)
+                    else -> Color.White
+                }
             }
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = bgColor,
-                    contentColor = DarkTextColor
+                    contentColor = if (isDark) Color(0xFFE6E6E6) else DarkTextColor
                 ),
                 shape = RoundedCornerShape(12.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)

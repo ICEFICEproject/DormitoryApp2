@@ -38,6 +38,8 @@ import com.example.dormitoryapp.data.LeaderApiService
 import com.example.dormitoryapp.data.LeaderAuthResult
 import com.example.dormitoryapp.data.LeaderPingResult
 import com.example.dormitoryapp.data.LeaderProfile
+import com.example.dormitoryapp.ui.theme.AppColorPalette
+import com.example.dormitoryapp.ui.theme.ThemeMode
 import com.example.dormitoryapp.data.LeaderSyncResult
 import com.example.dormitoryapp.data.InspectionEntity
 import com.example.dormitoryapp.data.InspectionRoomItem
@@ -184,6 +186,32 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         }.getOrDefault(RoomSortMode.DEFAULT)
     )
     val roomSortMode: StateFlow<RoomSortMode> = _roomSortMode.asStateFlow()
+
+    // Режим темы (Системная, Светлая, Тёмная)
+    private val _themeMode = MutableStateFlow(
+        runCatching {
+            ThemeMode.valueOf(prefs.getString("app_theme_mode", ThemeMode.SYSTEM.name)!!)
+        }.getOrDefault(ThemeMode.SYSTEM)
+    )
+    val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
+
+    // Цветовая палитра акцентов интерфейса
+    private val _colorPalette = MutableStateFlow(
+        runCatching {
+            AppColorPalette.valueOf(prefs.getString("app_color_palette", AppColorPalette.BURGUNDY.name)!!)
+        }.getOrDefault(AppColorPalette.BURGUNDY)
+    )
+    val colorPalette: StateFlow<AppColorPalette> = _colorPalette.asStateFlow()
+
+    fun setThemeMode(mode: ThemeMode) {
+        _themeMode.value = mode
+        prefs.edit().putString("app_theme_mode", mode.name).apply()
+    }
+
+    fun setColorPalette(palette: AppColorPalette) {
+        _colorPalette.value = palette
+        prefs.edit().putString("app_color_palette", palette.name).apply()
+    }
 
     // Версия кастомного порядка (для мгновенной перерисовки Compose списков)
     private val _customOrderVersion = MutableStateFlow(0)
@@ -482,6 +510,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
                     val profile = result.profile
                     _leaderProfile.value = profile
                     _assignedFloor.value = profile.floor
+                    _selectedFloor.value = profile.floor
                     _inspectorName.value = profile.user.fullName
                     syncProfileRoomsToDatabase(profile)
                     _lastPingResult.value = "Связь есть. Время сервера: ${result.serverTime}"
@@ -745,8 +774,8 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         // 1. В будущее никто не может выставлять отметки
         if (targetDate.isAfter(today)) return false
 
-        // 2. Доступ к этажу: зам. воспитателя ко всем, остальные — только к своему
-        val hasFloorAccess = _currentRole.value == StaffRole.DEPUTY_EDUCATOR || floor == _assignedFloor.value
+        // 2. Доступ к этажу: только к своему закрепленному этажу
+        val hasFloorAccess = floor == _assignedFloor.value
         if (!hasFloorAccess) return false
 
         // 3. Сегодняшний день могут отмечать все сотрудники на своем этаже
@@ -797,8 +826,8 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
             return isDeputy
         }
 
-        // 3. Для сегодняшней даты: зам. воспитателя имеет доступ ко всем этажам, остальные — только к своему закрепленному
-        if (!isDeputy && !isMyFloor) return false
+        // 3. Для сегодняшней даты: доступ только к своему закрепленному этажу
+        if (!isMyFloor) return false
 
         val isCreatedByDeputy = incident.inspectorName.contains("Заместитель", ignoreCase = true) ||
                 incident.inspectorName.contains("Зам.", ignoreCase = true) ||
@@ -814,9 +843,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectFloor(floor: Int) {
-        if (floor in 2..5) {
-            _selectedFloor.value = floor
-        }
+        _selectedFloor.value = _assignedFloor.value
     }
 
     fun changeDateByDays(daysDelta: Long) {
@@ -985,8 +1012,9 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
     // --- 4. МЕТОДЫ МОДУЛЯ «ГРАФИК ДЕЖУРСТВ ПО ЭТАЖУ» ---
 
     fun canEditDutySchedule(floor: Int): Boolean {
-        return _currentRole.value == StaffRole.DEPUTY_EDUCATOR ||
-                (_currentRole.value == StaffRole.FLOOR_COMMANDER && _assignedFloor.value == floor)
+        return (_currentRole.value == StaffRole.DEPUTY_EDUCATOR ||
+                _currentRole.value == StaffRole.FLOOR_COMMANDER) &&
+                _assignedFloor.value == floor
     }
 
     fun saveFloorDutyRecord(record: FloorDutyScheduleRecord) {

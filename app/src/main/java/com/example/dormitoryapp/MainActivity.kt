@@ -34,7 +34,7 @@ import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Nightlight
-import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
@@ -47,10 +47,10 @@ import com.example.dormitoryapp.data.ReportService
 import com.example.dormitoryapp.data.ShiftRankingSummary
 import com.example.dormitoryapp.data.StaffRole
 import com.example.dormitoryapp.ui.components.ShiftSummaryDialog
+import com.example.dormitoryapp.ui.components.ThemeSettingsDialog
 import com.example.dormitoryapp.ui.DormViewModel
 import com.example.dormitoryapp.ui.screens.CleanlinessScreen
 import com.example.dormitoryapp.ui.screens.DashboardScreen
-import com.example.dormitoryapp.ui.screens.HeadcountScreen
 import com.example.dormitoryapp.ui.screens.LoginScreen
 import com.example.dormitoryapp.ui.screens.SilenceScreen
 import com.example.dormitoryapp.ui.theme.DormitoryAppTheme
@@ -101,8 +101,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            DormitoryAppTheme {
-                val viewModel: DormViewModel = viewModel()
+            val viewModel: DormViewModel = viewModel()
+            val themeMode by viewModel.themeMode.collectAsState()
+            val colorPalette by viewModel.colorPalette.collectAsState()
+
+            DormitoryAppTheme(
+                themeMode = themeMode,
+                colorPalette = colorPalette
+            ) {
                 val isLoggedIn by viewModel.isLoggedIn.collectAsState()
                 val isAuthLoading by viewModel.isAuthLoading.collectAsState()
                 val authErrorMessage by viewModel.authErrorMessage.collectAsState()
@@ -143,7 +149,6 @@ fun DormMainApp(viewModel: DormViewModel) {
     val isSyncing by viewModel.isSyncing.collectAsState()
 
     val allRooms by viewModel.allRooms.collectAsState()
-    val headcountRecords by viewModel.headcountRecords.collectAsState()
     val cleanlinessRecords by viewModel.cleanlinessRecords.collectAsState()
     val allCleanlinessRecords by viewModel.allCleanlinessRecords.collectAsState()
     val kitchenDutyRecords by viewModel.kitchenDutyRecords.collectAsState()
@@ -153,6 +158,8 @@ fun DormMainApp(viewModel: DormViewModel) {
 
     val roomSortMode by viewModel.roomSortMode.collectAsState()
     val customOrderVersion by viewModel.customOrderVersion.collectAsState()
+    val themeMode by viewModel.themeMode.collectAsState()
+    val colorPalette by viewModel.colorPalette.collectAsState()
 
     // Состояния интеграции с сервером ИС «Цифровое общежитие»
     val leaderProfile by viewModel.leaderProfile.collectAsState()
@@ -179,19 +186,18 @@ fun DormMainApp(viewModel: DormViewModel) {
     val context = LocalContext.current
     var currentTab by remember { mutableIntStateOf(0) }
     var showProfileDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
     var showShiftSummaryDialog by remember { mutableStateOf(false) }
     var showReportTypeDialog by remember { mutableStateOf(false) }
     var showSendReportDialog by remember { mutableStateOf(false) }
     var selectedReportType by remember { mutableStateOf(ReportService.ReportType.ALL) }
 
-    val pagerState = rememberPagerState(initialPage = currentTab) { 4 }
+    val pagerState = rememberPagerState(initialPage = currentTab) { 3 }
     val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(pagerState.currentPage) {
         currentTab = pagerState.currentPage
     }
-
-    val isDeputy = currentRole == StaffRole.DEPUTY_EDUCATOR
 
     Scaffold(
         topBar = {
@@ -204,8 +210,7 @@ fun DormMainApp(viewModel: DormViewModel) {
                     title = {
                         Column {
                             Text(
-                                text = if (isDeputy) "Общежитие (все этажи)"
-                                else "Общежитие • Мой этаж: $assignedFloor-й",
+                                text = "Общежитие • Мой этаж: $assignedFloor-й",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp,
                                 maxLines = 1,
@@ -310,21 +315,13 @@ fun DormMainApp(viewModel: DormViewModel) {
                     onClick = {
                         coroutineScope.launch { pagerState.animateScrollToPage(1) }
                     },
-                    icon = { Icon(Icons.Default.People, contentDescription = null) },
-                    label = { Text("Численность") }
+                    icon = { Icon(Icons.Default.CleaningServices, contentDescription = null) },
+                    label = { Text("Чистота") }
                 )
                 NavigationBarItem(
                     selected = currentTab == 2,
                     onClick = {
                         coroutineScope.launch { pagerState.animateScrollToPage(2) }
-                    },
-                    icon = { Icon(Icons.Default.CleaningServices, contentDescription = null) },
-                    label = { Text("Чистота") }
-                )
-                NavigationBarItem(
-                    selected = currentTab == 3,
-                    onClick = {
-                        coroutineScope.launch { pagerState.animateScrollToPage(3) }
                     },
                     icon = { Icon(Icons.Default.Nightlight, contentDescription = null) },
                     label = { Text("Тишина") }
@@ -348,7 +345,6 @@ fun DormMainApp(viewModel: DormViewModel) {
                         currentRole = currentRole,
                         assignedFloor = assignedFloor,
                         allRooms = allRooms,
-                        headcountRecords = headcountRecords,
                         cleanlinessRecords = cleanlinessRecords,
                         kitchenDutyRecords = kitchenDutyRecords,
                         silenceIncidents = silenceIncidents,
@@ -357,40 +353,12 @@ fun DormMainApp(viewModel: DormViewModel) {
                         onSaveFloorDutyWeek = { floor, records ->
                             viewModel.saveFloorDutyWeek(floor, records)
                         },
-                        onNavigateToFloorHeadcount = { floor ->
-                            viewModel.selectFloor(floor)
-                            coroutineScope.launch { pagerState.animateScrollToPage(1) }
-                        },
                         onOpenShiftSummary = {
                             showShiftSummaryDialog = true
                         }
                     )
 
-                    1 -> HeadcountScreen(
-                        selectedFloor = selectedFloor,
-                        assignedFloor = assignedFloor,
-                        canEditThisFloor = viewModel.canEditFloor(selectedFloor),
-                        onSelectFloor = { viewModel.selectFloor(it) },
-                        allRooms = allRooms,
-                        headcountRecords = headcountRecords,
-                        roomSortMode = roomSortMode,
-                        onSetRoomSortMode = { viewModel.setRoomSortMode(it) },
-                        getSortedRooms = { rooms, mode -> viewModel.getSortedRooms(rooms, mode) },
-                        onSaveCustomOrder = { floor, order -> viewModel.saveCustomOrderForFloor(floor, order) },
-                        onResetCustomOrder = { floor -> viewModel.resetCustomOrderForFloor(floor) },
-                        customOrderVersion = customOrderVersion,
-                        onSaveRoomHeadcount = { room, count ->
-                            viewModel.saveRoomHeadcount(room, count)
-                        },
-                        onUpdateRoomCapacity = { room, newCap ->
-                            viewModel.updateRoomCapacity(room, newCap)
-                        },
-                        onFillUncheckedWithNorm = { floor ->
-                            viewModel.fillUncheckedRoomsWithNorm(floor)
-                        }
-                    )
-
-                    2 -> CleanlinessScreen(
+                    1 -> CleanlinessScreen(
                         selectedDate = selectedDate,
                         selectedFloor = selectedFloor,
                         assignedFloor = assignedFloor,
@@ -435,7 +403,7 @@ fun DormMainApp(viewModel: DormViewModel) {
                         }
                     )
 
-                    3 -> SilenceScreen(
+                    2 -> SilenceScreen(
                         selectedDate = selectedDate,
                         incidents = silenceIncidents,
                         currentRole = currentRole,
@@ -470,7 +438,7 @@ fun DormMainApp(viewModel: DormViewModel) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF3F5F8)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Column(
@@ -478,7 +446,7 @@ fun DormMainApp(viewModel: DormViewModel) {
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text("ФИО: $inspectorName", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Text("Логин в системе: $currentLogin", fontSize = 13.sp, color = Color.DarkGray)
+                            Text("Логин в системе: $currentLogin", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
                             Text("Должность: ${currentRole.title}", fontSize = 13.sp)
                             Text("Рабочий этаж: $assignedFloor-й этаж", fontSize = 13.sp)
                             Text(
@@ -497,6 +465,22 @@ fun DormMainApp(viewModel: DormViewModel) {
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
+
+                    // Кнопка «Оформление и тема»
+                    Button(
+                        onClick = {
+                            showProfileDialog = false
+                            showThemeDialog = true
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Palette, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Оформление и тема")
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     // Кнопка «На вахте: Связь и синхронизация»
                     Button(
@@ -596,7 +580,17 @@ fun DormMainApp(viewModel: DormViewModel) {
         onReAuthSubmit = { login, pass -> viewModel.login(login, pass) }
     )
 
-    // Шаг 1: Диалог выбора типа отчета (Численность, Чистота, Тишина, Сводный)
+    // Диалог настройки внешнего вида (тема и цветовая палитра)
+    ThemeSettingsDialog(
+        isOpen = showThemeDialog,
+        currentThemeMode = themeMode,
+        currentPalette = colorPalette,
+        onThemeModeChange = { viewModel.setThemeMode(it) },
+        onPaletteChange = { viewModel.setColorPalette(it) },
+        onDismiss = { showThemeDialog = false }
+    )
+
+    // Шаг 1: Диалог выбора типа отчета (Чистота, Тишина, Сводный)
     if (showReportTypeDialog) {
         AlertDialog(
             onDismissRequest = { showReportTypeDialog = false },
@@ -621,39 +615,32 @@ fun DormMainApp(viewModel: DormViewModel) {
 
                     val types = listOf(
                         Triple(
-                            ReportService.ReportType.HEADCOUNT,
-                            "1. Численность",
-                            "Ночной обход, норма мест, фактически ночующие и отсутствующие"
-                        ),
-                        Triple(
                             ReportService.ReportType.CLEANLINESS,
-                            "2. Чистота",
+                            "1. Чистота",
                             "Санитарное состояние всех комнат (включая чистые), дежурства по кухне и штрафы"
                         ),
                         Triple(
                             ReportService.ReportType.SILENCE,
-                            "3. Тишина",
+                            "2. Тишина",
                             "Соблюдение режима тишины, журнал инцидентов и штрафные баллы"
                         ),
                         Triple(
                             ReportService.ReportType.ALL,
                             "Полный сводный отчёт",
-                            "Все 3 раздела (Численность + Чистота + Тишина) в одном документе"
+                            "Все разделы (Чистота + Кухни + Тишина) в одном документе"
                         )
                     )
 
                     types.forEach { (type, title, desc) ->
                         val itemIcon = when (type) {
-                            ReportService.ReportType.HEADCOUNT -> Icons.Default.People
                             ReportService.ReportType.CLEANLINESS -> Icons.Default.CleaningServices
                             ReportService.ReportType.SILENCE -> Icons.Default.Nightlight
-                            ReportService.ReportType.ALL -> Icons.Default.Assessment
+                            else -> Icons.Default.Assessment
                         }
                         val itemColor = when (type) {
-                            ReportService.ReportType.HEADCOUNT -> Color(0xFF1565C0)
                             ReportService.ReportType.CLEANLINESS -> Color(0xFF2E7D32)
                             ReportService.ReportType.SILENCE -> Color(0xFF7B1FA2)
-                            ReportService.ReportType.ALL -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.primary
                         }
 
                         Card(
@@ -754,7 +741,6 @@ fun DormMainApp(viewModel: DormViewModel) {
                                             inspectorRole = currentRole.title,
                                             recipient = recipient,
                                             allRooms = allRooms,
-                                            headcounts = headcountRecords,
                                             cleanliness = cleanlinessRecords,
                                             allCleanliness = allCleanlinessRecords,
                                             kitchenDuty = kitchenDutyRecords,
@@ -769,7 +755,6 @@ fun DormMainApp(viewModel: DormViewModel) {
                                             inspectorRole = currentRole.title,
                                             recipient = recipient,
                                             allRooms = allRooms,
-                                            headcounts = headcountRecords,
                                             cleanliness = cleanlinessRecords,
                                             allCleanliness = allCleanlinessRecords,
                                             kitchenDuty = kitchenDutyRecords,

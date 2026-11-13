@@ -45,7 +45,7 @@ object ReportService {
         inspectorRole: String,
         recipient: ReportRecipient,
         allRooms: List<DormRoom>,
-        headcounts: List<HeadcountRecord>,
+        headcounts: List<HeadcountRecord> = emptyList(),
         cleanliness: List<CleanlinessRecord>,
         allCleanliness: List<CleanlinessRecord> = cleanliness,
         kitchenDuty: List<KitchenDutyRecord>,
@@ -206,23 +206,8 @@ object ReportService {
             }
 
             ReportType.ALL -> {
-                // Раздел 1: Численность
-                sb.appendLine("1. ЧИСЛЕННОСТЬ И НОЧНОЙ ОБХОД")
-                sb.appendLine("────────────────────────────────────────")
-                sb.appendLine("• Всего комнат: $totalRooms (проверено: $checkedRoomsCount)")
-                sb.appendLine("• Штатная норма этажа: $totalCapacity чел.")
-                sb.appendLine("• Фактически ночует: $totalPresent чел.")
-                sb.appendLine("• Отсутствует (ночуют вне общежития): $totalAbsent чел.")
-                if (roomsWithAbsentees.isNotEmpty()) {
-                    sb.appendLine("\nКомнаты с отсутствующими:")
-                    roomsWithAbsentees.forEach { sb.appendLine(it) }
-                } else if (checkedRoomsCount == totalRooms) {
-                    sb.appendLine("• Все проживающие на месте, отсутствующих нет.")
-                }
-                sb.appendLine()
-
-                // Раздел 2: Санитарное состояние (запись всех комнат!)
-                sb.appendLine("2. САНИТАРНОЕ СОСТОЯНИЕ (ЧИСТОТА ЗА СЕГОДНЯ)")
+                // Раздел 1: Санитарное состояние (запись всех комнат!)
+                sb.appendLine("1. САНИТАРНОЕ СОСТОЯНИЕ (ЧИСТОТА ЗА СЕГОДНЯ)")
                 sb.appendLine("────────────────────────────────────────")
                 sb.appendLine("• Проверено комнат: ${floorCleanliness.size} из $totalRooms")
                 sb.appendLine("• Чисто (0 б.): $cleanCount комн.")
@@ -242,8 +227,8 @@ object ReportService {
                 }
                 sb.appendLine()
 
-                // Раздел 3: Кухни
-                sb.appendLine("3. ДЕЖУРСТВО ПО КУХНЯМ")
+                // Раздел 2: Кухни
+                sb.appendLine("2. ДЕЖУРСТВО ПО КУХНЯМ")
                 sb.appendLine("────────────────────────────────────────")
                 if (floorKitchens.isEmpty()) {
                     sb.appendLine("• Отметки по кухням за этот день отсутствуют.")
@@ -255,8 +240,8 @@ object ReportService {
                 }
                 sb.appendLine()
 
-                // Раздел 4: Режим тишины
-                sb.appendLine("4. СОБЛЮДЕНИЕ РЕЖИМА ТИШИНЫ")
+                // Раздел 3: Режим тишины
+                sb.appendLine("3. СОБЛЮДЕНИЕ РЕЖИМА ТИШИНЫ")
                 sb.appendLine("────────────────────────────────────────")
                 if (floorSilence.isEmpty()) {
                     sb.appendLine("• Нарушений режима тишины не зафиксировано (0 штр. б.).")
@@ -269,8 +254,8 @@ object ReportService {
                 }
                 sb.appendLine()
 
-                // Раздел 5: Накопительный рейтинг
-                sb.appendLine("5. НАКОПИТЕЛЬНЫЙ РЕЙТИНГ ШТРАФОВ (ЗА ВСЁ ВРЕМЯ)")
+                // Раздел 4: Накопительный рейтинг
+                sb.appendLine("4. НАКОПИТЕЛЬНЫЙ РЕЙТИНГ ШТРАФОВ (ЗА ВСЁ ВРЕМЯ)")
                 sb.appendLine("────────────────────────────────────────")
                 sb.appendLine("• Сумма штрафных баллов на этаже: $totalFloorPenaltyPoints б.")
                 sb.appendLine("  (за чистоту: $totalFloorCleanlinessPoints б., за режим тишины: $totalFloorSilencePoints б.)")
@@ -305,7 +290,7 @@ object ReportService {
         inspectorRole: String,
         recipient: ReportRecipient,
         allRooms: List<DormRoom>,
-        headcounts: List<HeadcountRecord>,
+        headcounts: List<HeadcountRecord> = emptyList(),
         cleanliness: List<CleanlinessRecord>,
         allCleanliness: List<CleanlinessRecord> = cleanliness,
         kitchenDuty: List<KitchenDutyRecord>,
@@ -432,7 +417,6 @@ object ReportService {
                 SheetDef("Режим тишины", sheetSilenceOnlyXml)
             )
             ReportType.ALL -> listOf(
-                SheetDef("Численность", sheet1Xml),
                 SheetDef("Чистота комнат", sheet2Xml),
                 SheetDef("Кухни и Тишина", sheet3Xml)
             )
