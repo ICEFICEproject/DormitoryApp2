@@ -69,35 +69,6 @@ interface DormDao {
     @Query("SELECT * FROM cleanliness_records WHERE date = :date")
     suspend fun getCleanlinessRecordsForDate(date: String): List<CleanlinessRecord>
 
-    @androidx.room.Transaction
-    suspend fun syncCleanlinessFromCloud(date: String, cloudRecords: List<CleanlinessRecord>) {
-        val cloudRoomNumbers = cloudRecords.map { it.roomNumber }.toSet()
-        val localRecords = getCleanlinessRecordsForDate(date)
-        for (local in localRecords) {
-            if (local.roomNumber !in cloudRoomNumbers) {
-                deleteCleanlinessRecord(date, local.roomNumber)
-            }
-        }
-        if (cloudRecords.isNotEmpty()) {
-            insertCleanlinessRecords(cloudRecords)
-        }
-    }
-
-    @androidx.room.Transaction
-    suspend fun syncAllCleanlinessFromCloud(cloudRecords: List<CleanlinessRecord>, protectedKeys: Set<String> = emptySet()) {
-        val cloudKeys = cloudRecords.map { "${it.date}_${it.roomNumber}" }.toSet()
-        val localRecords = getAllCleanlinessRecords()
-        for (local in localRecords) {
-            val key = "${local.date}_${local.roomNumber}"
-            if (key !in cloudKeys && key !in protectedKeys) {
-                deleteCleanlinessRecord(local.date, local.roomNumber)
-            }
-        }
-        if (cloudRecords.isNotEmpty()) {
-            insertCleanlinessRecords(cloudRecords)
-        }
-    }
-
     // --- 4. ДЕЖУРСТВО ПО КУХНЕ ---
 
     @Query("SELECT * FROM kitchen_duty_records WHERE date = :date ORDER BY floor ASC, kitchenSide ASC")
@@ -134,31 +105,6 @@ interface DormDao {
 
     @Query("DELETE FROM silence_incidents")
     suspend fun clearAllSilenceIncidents()
-
-    @androidx.room.Transaction
-    suspend fun syncSilenceIncidentsFromCloud(
-        cloudIncidents: List<SilenceIncidentRecord>,
-        protectedIncidentKeys: Set<String> = emptySet()
-    ) {
-        val cloudIds = cloudIncidents.map { it.id }.toSet()
-        val cloudKeys = cloudIncidents.map { "${it.date}_${it.roomNumber}_${it.time}" }.toSet()
-        val localIncidents = getAllSilenceIncidentsList()
-        for (local in localIncidents) {
-            val localKey = "${local.date}_${local.roomNumber}_${local.time}"
-            if (local.id !in cloudIds) {
-                // Если запись уже есть в облаке (но под облачным id), удаляем старую локальную запись, чтобы не было дубля
-                if (localKey in cloudKeys) {
-                    deleteSilenceIncident(local.id)
-                } else if (localKey !in protectedIncidentKeys) {
-                    // Записи нет в облаке и она не в оффлайн-очереди (была удалена на другом устройстве)
-                    deleteSilenceIncident(local.id)
-                }
-            }
-        }
-        if (cloudIncidents.isNotEmpty()) {
-            insertSilenceIncidents(cloudIncidents)
-        }
-    }
 
     // --- 6. НЕДЕЛЬНЫЙ ГРАФИК ДЕЖУРСТВ СОТРУДНИКОВ ПО ЭТАЖУ ---
 

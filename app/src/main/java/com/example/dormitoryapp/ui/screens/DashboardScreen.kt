@@ -54,8 +54,8 @@ import com.example.dormitoryapp.data.CleanlinessRecord
 import com.example.dormitoryapp.data.DormRoom
 import com.example.dormitoryapp.data.FloorDutyScheduleRecord
 import com.example.dormitoryapp.data.KitchenDutyRecord
-import com.example.dormitoryapp.data.RemoteStaffUser
 import com.example.dormitoryapp.data.SilenceIncidentRecord
+import com.example.dormitoryapp.data.StaffMember
 import com.example.dormitoryapp.data.StaffRole
 import java.time.LocalDate
 
@@ -75,7 +75,7 @@ fun DashboardScreen(
     kitchenDutyRecords: List<KitchenDutyRecord>,
     silenceIncidents: List<SilenceIncidentRecord>,
     floorDutySchedules: List<FloorDutyScheduleRecord> = emptyList(),
-    staffUsers: List<RemoteStaffUser> = emptyList(),
+    staffUsers: List<StaffMember> = emptyList(),
     onSaveFloorDutyWeek: (Int, List<FloorDutyScheduleRecord>) -> Unit = { _, _ -> },
     onOpenShiftSummary: () -> Unit = {}
 ) {
@@ -449,7 +449,7 @@ private fun FloorDutyScheduleList(
 private fun EditFloorDutyScheduleDialog(
     floor: Int,
     currentDuties: List<FloorDutyScheduleRecord>,
-    floorStaff: List<RemoteStaffUser>,
+    floorStaff: List<StaffMember>,
     onDismiss: () -> Unit,
     onSave: (List<FloorDutyScheduleRecord>) -> Unit
 ) {

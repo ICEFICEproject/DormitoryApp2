@@ -4,7 +4,6 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.dormitoryapp.data.AuthResult
 import com.example.dormitoryapp.data.CleanlinessRecord
 import com.example.dormitoryapp.data.DormDatabase
 import com.example.dormitoryapp.data.DormRepository
@@ -13,13 +12,10 @@ import com.example.dormitoryapp.data.DormRoom
 import com.example.dormitoryapp.data.FloorDutyScheduleRecord
 import com.example.dormitoryapp.data.HeadcountRecord
 import com.example.dormitoryapp.data.KitchenDutyRecord
-import com.example.dormitoryapp.data.RemoteStaffUser
 import com.example.dormitoryapp.data.RoomSortMode
 import com.example.dormitoryapp.data.SilenceIncidentRecord
+import com.example.dormitoryapp.data.StaffMember
 import com.example.dormitoryapp.data.StaffRole
-import com.example.dormitoryapp.data.SupabaseAuthService
-import com.example.dormitoryapp.data.SupabaseSyncService
-import com.example.dormitoryapp.data.SyncQueueManager
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -310,11 +306,32 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
     val allFloorDutySchedules: StateFlow<List<FloorDutyScheduleRecord>> = repository.allFloorDutySchedulesFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Список всех зарегистрированных сотрудников из Supabase
-    private val _staffUsers = MutableStateFlow<List<RemoteStaffUser>>(emptyList())
-    val staffUsers: StateFlow<List<RemoteStaffUser>> = _staffUsers.asStateFlow()
+    // Список сотрудников общежития
+    private val _staffUsers = MutableStateFlow<List<StaffMember>>(emptyList())
+    val staffUsers: StateFlow<List<StaffMember>> = _staffUsers.asStateFlow()
+
+    private fun updateStaffUsersFromProfile(profile: LeaderProfile?) {
+        if (profile == null) {
+            _staffUsers.value = emptyList()
+            return
+        }
+        val role = when (profile.position.lowercase()) {
+            "commander" -> StaffRole.FLOOR_COMMANDER
+            "elder" -> StaffRole.FLOOR_HEAD
+            "initiative" -> StaffRole.INITIATIVE_GROUP
+            else -> StaffRole.FLOOR_HEAD
+        }
+        _staffUsers.value = listOf(
+            StaffMember(
+                fullName = profile.user.fullName,
+                role = role,
+                assignedFloor = profile.floor
+            )
+        )
+    }
 
     init {
+        updateStaffUsersFromProfile(_leaderProfile.value)
         viewModelScope.launch {
             DormDatabase.ensureInitialRoomsPopulated(dao)
             // Если профиль уже сохранён в памяти, обновляем данные этажа
@@ -391,6 +408,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
                         .apply()
 
                     syncProfileRoomsToDatabase(profile)
+                    updateStaffUsersFromProfile(profile)
 
                     // Если ранее требовался повторный вход на вахте при отправке очереди,
                     // сразу же отправляем данные в тот же заход!
@@ -472,6 +490,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             syncProfileRoomsToDatabase(demoProfile)
         }
+        updateStaffUsersFromProfile(demoProfile)
     }
 
     fun logout() {
@@ -493,6 +512,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         _selectedFloor.value = 3
         _authErrorMessage.value = null
         _leaderProfile.value = null
+        _staffUsers.value = emptyList()
         // Важно: неотправленные проверки НЕ удаляем, они остаются в Room!
     }
 
@@ -513,6 +533,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
                     _selectedFloor.value = profile.floor
                     _inspectorName.value = profile.user.fullName
                     syncProfileRoomsToDatabase(profile)
+                    updateStaffUsersFromProfile(profile)
                     _lastPingResult.value = "Связь есть. Время сервера: ${result.serverTime}"
                     _pingErrorMessage.value = null
                     _requiresReAuth.value = false
@@ -760,11 +781,6 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         _quietSessionError.value = null
     }
 
-    // Сохранение совместимости со старыми вызовами
-    fun triggerCloudSync(silent: Boolean = false) {
-        // Оффлайн-архитектура: синхронизация выполняется вручную на вахте (syncLeaderData)
-    }
-
     // --- ПРОВЕРКА ПРАВ НА РЕДАКТИРОВАНИЕ ЭТАЖА И ДАТЫ ---
 
     fun canEditFloor(floor: Int, date: String = _selectedDate.value): Boolean {
@@ -852,12 +868,10 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         val target = current.plusDays(daysDelta)
         if (target.isAfter(today)) return // Запрет перехода в будущие даты
         _selectedDate.value = target.toString()
-        triggerCloudSync()
     }
 
     fun resetToToday() {
         _selectedDate.value = LocalDate.now().toString()
-        triggerCloudSync()
     }
 
     private fun currentInspectorLabel(): String {
@@ -997,7 +1011,6 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         )
         viewModelScope.launch {
             repository.addSilenceIncident(record)
-            triggerCloudSync(silent = true)
         }
     }
 
@@ -1005,7 +1018,6 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         if (!canDeleteSilenceIncident(incident)) return
         viewModelScope.launch {
             repository.deleteSilenceIncident(incident)
-            triggerCloudSync(silent = true)
         }
     }
 

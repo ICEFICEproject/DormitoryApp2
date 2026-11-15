@@ -5,8 +5,7 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * Интерфейс Репозитория (Single Source of Truth).
- * Абстрагирует UI и ViewModel от конкретных источников данных (Room, Supabase или будущего собственного сервера).
- * При переносе базы с Supabase на свой бэкенд достаточно изменить реализацию этого репозитория.
+ * Абстрагирует UI и ViewModel от источников данных (Room и сервер ИС «Цифровое общежитие»).
  */
 interface DormRepository {
 
@@ -19,7 +18,7 @@ interface DormRepository {
     val allSilenceIncidentsFlow: Flow<List<SilenceIncidentRecord>>
     val allFloorDutySchedulesFlow: Flow<List<FloorDutyScheduleRecord>>
 
-    // Операции с данными (сохранение в Room + очередь отправки в облако)
+    // Операции с данными (сохранение в Room)
     suspend fun updateRoomCapacity(room: DormRoom, newCapacity: Int)
     suspend fun saveHeadcountRecord(record: HeadcountRecord)
     suspend fun fillUncheckedRoomsWithNorm(
@@ -57,15 +56,11 @@ interface DormRepository {
     suspend fun leaderLogin(loginInput: String, passwordInput: String, newPasswordInput: String? = null): LeaderAuthResult
     suspend fun pingLeaderServer(): LeaderPingResult
     suspend fun syncLeaderInspections(): LeaderSyncResult
-
-    // Сетевые операции
-    suspend fun syncFromCloud(date: String): Boolean
-    suspend fun fetchStaffUsers(): List<RemoteStaffUser>
-    suspend fun authenticate(loginInput: String, passwordInput: String, previouslySavedLogin: String?): AuthResult
 }
 
 /**
- * Реализация DormRepository, объединяющая Room (DormDao) и Supabase (SupabaseSyncService).
+ * Реализация DormRepository на базе локальной базы Room (DormDao)
+ * и сервиса ИС «Цифровое общежитие» (LeaderApiService).
  */
 class DormRepositoryImpl(
     private val context: Context,
@@ -161,16 +156,10 @@ class DormRepositoryImpl(
     override suspend fun updateRoomCapacity(room: DormRoom, newCapacity: Int) {
         val validCapacity = newCapacity.coerceIn(0, 20)
         dao.updateRoom(room.copy(capacity = validCapacity))
-        SupabaseSyncService.uploadRoomCapacity(room.roomNumber, validCapacity)
     }
 
     override suspend fun saveHeadcountRecord(record: HeadcountRecord) {
-        val queueKey = "headcount_${record.date}_${record.roomNumber}"
-        SyncQueueManager.markPending(context, queueKey)
         dao.saveHeadcountRecord(record)
-        if (SupabaseSyncService.uploadHeadcount(record)) {
-            SyncQueueManager.markSynced(context, queueKey)
-        }
     }
 
     override suspend fun fillUncheckedRoomsWithNorm(
@@ -196,87 +185,32 @@ class DormRepositoryImpl(
     }
 
     override suspend fun saveCleanlinessRecord(record: CleanlinessRecord) {
-        val queueKey = "cleanliness_${record.date}_${record.roomNumber}"
-        SyncQueueManager.markPending(context, queueKey)
         dao.saveCleanlinessRecord(record)
-        if (SupabaseSyncService.uploadCleanliness(record)) {
-            SyncQueueManager.markSynced(context, queueKey)
-        }
     }
 
     override suspend fun deleteCleanlinessRecord(date: String, roomNumber: Int) {
-        val uploadKey = "cleanliness_${date}_$roomNumber"
-        val deleteKey = "delete_cleanliness_${date}_$roomNumber"
-        SyncQueueManager.markSynced(context, uploadKey)
-        SyncQueueManager.markPending(context, deleteKey)
         dao.deleteCleanlinessRecord(date, roomNumber)
-        if (SupabaseSyncService.deleteCleanlinessRecordCloud(date, roomNumber)) {
-            SyncQueueManager.markSynced(context, deleteKey)
-        }
     }
 
     override suspend fun saveKitchenDutyRecord(record: KitchenDutyRecord) {
-        val queueKey = "kitchen_${record.date}_${record.floor}_${record.kitchenSide}"
-        SyncQueueManager.markPending(context, queueKey)
         dao.saveKitchenDutyRecord(record)
-        if (SupabaseSyncService.uploadKitchenDuty(record)) {
-            SyncQueueManager.markSynced(context, queueKey)
-        }
     }
 
     override suspend fun deleteKitchenDutyRecord(date: String, floor: Int, kitchenSide: String) {
-        val uploadKey = "kitchen_${date}_${floor}_$kitchenSide"
-        val deleteKey = "delete_kitchen_${date}_${floor}_$kitchenSide"
-        SyncQueueManager.markSynced(context, uploadKey)
-        SyncQueueManager.markPending(context, deleteKey)
         dao.deleteKitchenDutyRecord(date, floor, kitchenSide)
-        if (SupabaseSyncService.deleteKitchenDutyCloud(date, floor, kitchenSide)) {
-            SyncQueueManager.markSynced(context, deleteKey)
-        }
     }
 
     override suspend fun addSilenceIncident(record: SilenceIncidentRecord) {
-        val queueKey = "silence_${record.date}_${record.roomNumber}_${record.time}"
-        SyncQueueManager.markPending(context, queueKey)
         dao.addSilenceIncident(record)
-        if (SupabaseSyncService.uploadSilenceIncident(record)) {
-            SyncQueueManager.markSynced(context, queueKey)
-        }
     }
 
     override suspend fun deleteSilenceIncident(incident: SilenceIncidentRecord) {
-        val uploadKey = "silence_${incident.date}_${incident.roomNumber}_${incident.time}"
-        val deleteKey = "delete_silence_${incident.date}_${incident.roomNumber}_${incident.time}"
-        SyncQueueManager.markSynced(context, uploadKey)
-        SyncQueueManager.markPending(context, deleteKey)
         dao.deleteSilenceIncident(incident.id)
-        if (SupabaseSyncService.deleteSilenceIncidentCloud(incident)) {
-            SyncQueueManager.markSynced(context, deleteKey)
-        }
     }
 
     override suspend fun saveFloorDutyWeek(floor: Int, records: List<FloorDutyScheduleRecord>) {
         val now = System.currentTimeMillis()
         val updated = records.map { it.copy(timestamp = now) }
         dao.saveFloorDutySchedule(updated)
-        updated.forEach { r ->
-            SupabaseSyncService.uploadFloorDutySchedule(r)
-        }
-    }
-
-    override suspend fun syncFromCloud(date: String): Boolean {
-        return SupabaseSyncService.pullAllDataForDate(context, date, dao)
-    }
-
-    override suspend fun fetchStaffUsers(): List<RemoteStaffUser> {
-        return SupabaseAuthService.fetchStaffUsers()
-    }
-
-    override suspend fun authenticate(
-        loginInput: String,
-        passwordInput: String,
-        previouslySavedLogin: String?
-    ): AuthResult {
-        return SupabaseAuthService.authenticate(loginInput, passwordInput, previouslySavedLogin)
     }
 }

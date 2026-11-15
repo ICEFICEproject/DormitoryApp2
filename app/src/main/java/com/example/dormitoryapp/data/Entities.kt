@@ -23,6 +23,15 @@ enum class RoomSortMode(val title: String, val chipLabel: String) {
     CUSTOM("Свой порядок", "⇅ Свой")
 }
 
+/**
+ * Модель сотрудника общежития для назначения дежурств по этажу.
+ */
+data class StaffMember(
+    val fullName: String,
+    val role: StaffRole,
+    val assignedFloor: Int
+)
+
 
 /**
  * 1. Таблица комнат общежития (dorm_rooms).
