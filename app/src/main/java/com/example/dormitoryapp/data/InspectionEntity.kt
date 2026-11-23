@@ -37,11 +37,15 @@ data class InspectionEntity(
                 val arr = JSONArray(json)
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
+                    val markedAt = if (obj.has("marked_at") && !obj.isNull("marked_at")) {
+                        obj.optString("marked_at").ifBlank { null }
+                    } else null
                     list.add(
                         InspectionRoomItem(
                             roomId = obj.optLong("room_id", 0),
                             score = obj.optInt("score", 0),
-                            comment = obj.optString("comment", "")
+                            comment = obj.optString("comment", ""),
+                            markedAt = markedAt
                         )
                     )
                 }
@@ -58,6 +62,9 @@ data class InspectionEntity(
                     put("room_id", r.roomId)
                     put("score", r.score)
                     put("comment", r.comment)
+                    if (!r.markedAt.isNullOrBlank()) {
+                        put("marked_at", r.markedAt)
+                    }
                 }
                 arr.put(obj)
             }

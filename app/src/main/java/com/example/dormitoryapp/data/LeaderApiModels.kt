@@ -15,7 +15,10 @@ data class LeaderUser(
     val middleName: String
 ) {
     val fullName: String
-        get() = listOf(lastName, firstName, middleName).filter { it.isNotBlank() }.joinToString(" ")
+        get() = listOf(lastName, firstName, middleName)
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+            .joinToString(" ")
 }
 
 data class LeaderRoom(
@@ -50,9 +53,14 @@ data class LeaderProfile(
         val root = JSONObject()
         val userObj = JSONObject().apply {
             put("id", user.id)
-            put("last_name", user.lastName)
-            put("first_name", user.firstName)
-            put("middle_name", user.middleName)
+            put("last_name", user.lastName.trim())
+            put("first_name", user.firstName.trim())
+            val mid = user.middleName.trim()
+            if (mid.isNotBlank() && !mid.equals("null", ignoreCase = true)) {
+                put("middle_name", mid)
+            } else {
+                put("middle_name", JSONObject.NULL)
+            }
         }
         root.put("user", userObj)
         root.put("position", position)
@@ -92,22 +100,33 @@ data class LeaderProfile(
         fun fromJson(jsonStr: String): LeaderProfile {
             val root = JSONObject(jsonStr)
             val userObj = root.optJSONObject("user") ?: JSONObject()
+
+            fun cleanString(obj: JSONObject, key: String): String {
+                if (obj.isNull(key)) return ""
+                val value = obj.optString(key, "").trim()
+                return if (value.equals("null", ignoreCase = true)) "" else value
+            }
+
             val user = LeaderUser(
                 id = userObj.optLong("id", 0),
-                lastName = userObj.optString("last_name", ""),
-                firstName = userObj.optString("first_name", ""),
-                middleName = userObj.optString("middle_name", "")
+                lastName = cleanString(userObj, "last_name"),
+                firstName = cleanString(userObj, "first_name"),
+                middleName = cleanString(userObj, "middle_name")
             )
 
             val roomsList = mutableListOf<LeaderRoom>()
-            val roomsArr = root.optJSONArray("rooms") ?: JSONArray()
+            val roomsArr = root.optJSONArray("rooms")
+                ?: root.optJSONArray("rooms_list")
+                ?: userObj.optJSONArray("rooms")
+                ?: JSONArray()
+
             for (i in 0 until roomsArr.length()) {
-                val r = roomsArr.getJSONObject(i)
+                val r = roomsArr.optJSONObject(i) ?: continue
                 roomsList.add(
                     LeaderRoom(
                         id = r.optLong("id", 0),
-                        number = r.optString("number", ""),
-                        active = r.optBoolean("active", true)
+                        number = cleanString(r, "number"),
+                        active = if (r.isNull("active")) true else r.optBoolean("active", true)
                     )
                 )
             }
@@ -120,22 +139,61 @@ data class LeaderProfile(
                 listOf(0, 5)
             }
             val rules = LeaderRules(
-                quietStart = rulesObj.optString("quiet_start", "23:00"),
-                quietLastStart = rulesObj.optString("quiet_last_start", "23:59"),
-                quietFinishBy = rulesObj.optString("quiet_finish_by", "00:30"),
+                quietStart = cleanString(rulesObj, "quiet_start").ifBlank { "23:00" },
+                quietLastStart = cleanString(rulesObj, "quiet_last_start").ifBlank { "23:59" },
+                quietFinishBy = cleanString(rulesObj, "quiet_finish_by").ifBlank { "00:30" },
                 cleanlinessMaxHours = rulesObj.optInt("cleanliness_max_hours", 3),
                 cleanlinessScore = scores,
                 commentMax = rulesObj.optInt("comment_max", 500)
             )
 
+            // Гибкий поиск этажа: root.floor, user.floor, номера комнат
+            val floorFromRoot = when {
+                root.has("floor") && !root.isNull("floor") -> root.optString("floor").toIntOrNull()
+                root.has("floor_number") && !root.isNull("floor_number") -> root.optString("floor_number").toIntOrNull()
+                else -> null
+            }
+            val floorFromUser = when {
+                userObj.has("floor") && !userObj.isNull("floor") -> userObj.optString("floor").toIntOrNull()
+                userObj.has("floor_number") && !userObj.isNull("floor_number") -> userObj.optString("floor_number").toIntOrNull()
+                else -> null
+            }
+            val floorFromRooms = roomsList.firstOrNull { it.roomNumberInt > 0 }?.let { it.roomNumberInt / 100 }
+            val resolvedFloor = (floorFromRoot ?: floorFromUser ?: floorFromRooms ?: 3).coerceIn(2, 5)
+
+            // Гибкий поиск должности: root.position, user.position, user.role
+            val rawPos = when {
+                root.has("position") && !root.isNull("position") -> root.optString("position")
+                userObj.has("position") && !userObj.isNull("position") -> userObj.optString("position")
+                userObj.has("role") && !userObj.isNull("role") -> userObj.optString("role")
+                else -> ""
+            }.trim().lowercase()
+
+            val resolvedPosition = when (rawPos) {
+                "commander", "floor_commander", "комендант", "командир", "командир этажа" -> "commander"
+                "elder", "староста", "староста этажа" -> "elder"
+                "initiative", "стажер", "инициативная группа" -> "initiative"
+                else -> if (rawPos.isNotBlank()) rawPos else "elder"
+            }
+
+            val resolvedPosLabel = cleanString(root, "position_label").ifBlank {
+                cleanString(userObj, "position_label").ifBlank {
+                    when (resolvedPosition) {
+                        "commander" -> "Командир этажа"
+                        "initiative" -> "Инициативная группа"
+                        else -> "Староста"
+                    }
+                }
+            }
+
             return LeaderProfile(
                 user = user,
-                position = root.optString("position", "elder"),
-                positionLabel = root.optString("position_label", "Староста"),
-                floor = root.optInt("floor", 3),
+                position = resolvedPosition,
+                positionLabel = resolvedPosLabel,
+                floor = resolvedFloor,
                 rooms = roomsList,
-                timezone = root.optString("timezone", "Europe/Moscow"),
-                serverTime = if (root.isNull("server_time")) null else root.optString("server_time"),
+                timezone = cleanString(root, "timezone").ifBlank { "Europe/Moscow" },
+                serverTime = if (root.isNull("server_time")) null else cleanString(root, "server_time").ifBlank { null },
                 rules = rules
             )
         }
@@ -157,7 +215,8 @@ sealed class LeaderPingResult {
 data class InspectionRoomItem(
     val roomId: Long,
     val score: Int,
-    val comment: String
+    val comment: String,
+    val markedAt: String? = null
 )
 
 data class SyncResultItem(

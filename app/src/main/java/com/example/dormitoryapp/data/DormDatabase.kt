@@ -45,43 +45,50 @@ abstract class DormDatabase : RoomDatabase() {
         }
 
         /**
+         * Гарантирует наличие всех 35 комнат для указанного этажа (00..34).
+         */
+        suspend fun ensureFloorRoomsExist(dao: DormDao, floor: Int) {
+            val validFloor = floor.coerceIn(2, 5)
+            val count = dao.getRoomsCountByFloor(validFloor)
+            if (count < 35) {
+                val rooms = mutableListOf<DormRoom>()
+                for (numOnFloor in 0..34) {
+                    val roomNumber = validFloor * 100 + numOnFloor
+                    val isFirstWing = numOnFloor <= 15
+                    val wingName = if (isFirstWing) "Северная (00–15)" else "Южная (16–34)"
+                    val defaultCapacity = when {
+                        numOnFloor == 34 -> 8
+                        isFirstWing -> 4
+                        else -> 6
+                    }
+                    rooms.add(
+                        DormRoom(
+                            roomNumber = roomNumber,
+                            floor = validFloor,
+                            wing = wingName,
+                            capacity = defaultCapacity
+                        )
+                    )
+                }
+                dao.insertRooms(rooms)
+            }
+        }
+
+        /**
          * Автоматическое заполнение базы всеми 140 комнатами (этажи со 2 по 5, комнаты 00..34).
          * Сторона 00–15: норма 4 человека.
          * Сторона 16–34: норма 6 человек.
          */
         suspend fun ensureInitialRoomsPopulated(dao: DormDao) {
-            if (dao.getRoomsCount() == 0) {
-                val initialRooms = mutableListOf<DormRoom>()
-                for (floor in 2..5) {
-                    for (numOnFloor in 0..34) {
-                        val roomNumber = floor * 100 + numOnFloor
-                        val isFirstWing = numOnFloor <= 15
-                        val wingName = if (isFirstWing) "Северная (00–15)" else "Южная (16–34)"
-                        val defaultCapacity = when {
-                            numOnFloor == 34 -> 8
-                            isFirstWing -> 4
-                            else -> 6
-                        }
-
-                        initialRooms.add(
-                            DormRoom(
-                                roomNumber = roomNumber,
-                                floor = floor,
-                                wing = wingName,
-                                capacity = defaultCapacity
-                            )
-                        )
-                    }
-                }
-                dao.insertRooms(initialRooms)
-            } else {
-                // Проверяем крайние 34-е комнаты (234, 334, 434, 534) на случай ранее созданной базы
-                for (floor in 2..5) {
-                    val room34 = floor * 100 + 34
-                    val room = dao.getRoomByNumber(room34)
-                    if (room != null && room.capacity < 8) {
-                        dao.updateRoom(room.copy(capacity = 8))
-                    }
+            for (floor in 2..5) {
+                ensureFloorRoomsExist(dao, floor)
+            }
+            // Проверяем крайние 34-е комнаты (234, 334, 434, 534) на случай ранее созданной базы
+            for (floor in 2..5) {
+                val room34 = floor * 100 + 34
+                val room = dao.getRoomByNumber(room34)
+                if (room != null && room.capacity < 8) {
+                    dao.updateRoom(room.copy(capacity = 8))
                 }
             }
             ensureFloorDutySchedulePopulated(dao)

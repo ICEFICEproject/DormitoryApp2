@@ -22,13 +22,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.Duration
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import com.example.dormitoryapp.data.LeaderRules
 
 import com.example.dormitoryapp.data.LeaderApiService
 import com.example.dormitoryapp.data.LeaderAuthResult
@@ -117,6 +123,10 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // --- СЕССИИ ПРОВЕРОК (ЧИСТОТА И ТИШИНА) ---
+    // ID дополняемой/редактируемой проверки чистоты (если дополняем уже существующую за сегодня)
+    private val _activeCleanlinessEventId = MutableStateFlow<String?>(null)
+    val activeCleanlinessEventId: StateFlow<String?> = _activeCleanlinessEventId.asStateFlow()
+
     // Время старта обхода чистоты (ISO 8601)
     private val _cleanlinessStartedAt = MutableStateFlow<String?>(null)
     val cleanlinessStartedAt: StateFlow<String?> = _cleanlinessStartedAt.asStateFlow()
@@ -124,6 +134,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
     // Текущие проставленные оценки в активной сессии чистоты (roomNumber -> (score, comment))
     private val _cleanlinessSessionScores = MutableStateFlow<Map<Int, Pair<Int, String>>>(emptyMap())
     val cleanlinessSessionScores: StateFlow<Map<Int, Pair<Int, String>>> = _cleanlinessSessionScores.asStateFlow()
+    private val _cleanlinessSessionScoreTimes = mutableMapOf<Int, String>()
 
     private val _cleanlinessSessionError = MutableStateFlow<String?>(null)
     val cleanlinessSessionError: StateFlow<String?> = _cleanlinessSessionError.asStateFlow()
@@ -135,6 +146,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
     // Зафиксированные нарушения тишины в активной сессии (roomNumber -> comment)
     private val _quietSessionIncidents = MutableStateFlow<List<Pair<Int, String>>>(emptyList())
     val quietSessionIncidents: StateFlow<List<Pair<Int, String>>> = _quietSessionIncidents.asStateFlow()
+    private val _quietSessionIncidentTimes = mutableMapOf<Int, String>()
 
     private val _quietSessionError = MutableStateFlow<String?>(null)
     val quietSessionError: StateFlow<String?> = _quietSessionError.asStateFlow()
@@ -271,8 +283,8 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Выбранная дата (по умолчанию сегодня)
-    private val _selectedDate = MutableStateFlow(LocalDate.now().toString())
+    // Выбранная дата (по умолчанию сегодня или вечер предыдущего дня, если сейчас глубокая ночь 00:00–05:00)
+    private val _selectedDate = MutableStateFlow(defaultWorkingDate())
     val selectedDate: StateFlow<String> = _selectedDate.asStateFlow()
 
     // Все 140 комнат общежития
@@ -306,6 +318,23 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
     val allFloorDutySchedules: StateFlow<List<FloorDutyScheduleRecord>> = repository.allFloorDutySchedulesFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Завершённая или сохранённая проверка тишины за выбранную дату для своего этажа (строго 1 за вечер)
+    val todayQuietInspection: StateFlow<InspectionEntity?> = combine(allInspections, _selectedDate, _assignedFloor) { inspections, date, floor ->
+        inspections.firstOrNull {
+            val startedDate = it.startedAt.take(10)
+            val finishedDate = it.finishedAt.take(10)
+            val isSameEvening = startedDate == date || (date == finishedDate && startedDate == runCatching { LocalDate.parse(date).minusDays(1).toString() }.getOrNull())
+            it.type == "quiet" && it.floor == floor && isSameEvening && it.syncStatus != InspectionEntity.STATUS_REJECTED
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    // Завершённая или сохранённая проверка чистоты за выбранную дату для своего этажа
+    val todayCleanlinessInspection: StateFlow<InspectionEntity?> = combine(allInspections, _selectedDate, _assignedFloor) { inspections, date, floor ->
+        inspections.firstOrNull {
+            it.type == "cleanliness" && it.floor == floor && it.startedAt.take(10) == date && it.syncStatus != InspectionEntity.STATUS_REJECTED
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     // Список сотрудников общежития
     private val _staffUsers = MutableStateFlow<List<StaffMember>>(emptyList())
     val staffUsers: StateFlow<List<StaffMember>> = _staffUsers.asStateFlow()
@@ -316,7 +345,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val role = when (profile.position.lowercase()) {
-            "commander" -> StaffRole.FLOOR_COMMANDER
+            "commander", "floor_commander" -> StaffRole.FLOOR_COMMANDER
             "elder" -> StaffRole.FLOOR_HEAD
             "initiative" -> StaffRole.INITIATIVE_GROUP
             else -> StaffRole.FLOOR_HEAD
@@ -342,7 +371,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun syncProfileRoomsToDatabase(profile: LeaderProfile) {
-        val floor = profile.floor
+        val floor = profile.floor.coerceIn(2, 5)
         val dbRooms = mutableListOf<DormRoom>()
         for (r in profile.rooms) {
             val num = r.roomNumberInt
@@ -366,6 +395,10 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (dbRooms.isNotEmpty()) {
             dao.insertRooms(dbRooms)
+        } else {
+            // КРИТИЧЕСКИЙ FALLBACK: если сервер вернул пустой список комнат (например, для командира этажа),
+            // гарантированно создаем и заполняем стандартные 35 комнат этого этажа!
+            DormDatabase.ensureFloorRoomsExist(dao, floor)
         }
     }
 
@@ -389,7 +422,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
                     _currentLogin.value = loginInput.trim()
 
                     val role = when (profile.position.lowercase()) {
-                        "commander" -> StaffRole.FLOOR_COMMANDER
+                        "commander", "floor_commander" -> StaffRole.FLOOR_COMMANDER
                         "elder" -> StaffRole.FLOOR_HEAD
                         "initiative" -> StaffRole.INITIATIVE_GROUP
                         else -> StaffRole.FLOOR_HEAD
@@ -513,7 +546,61 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         _authErrorMessage.value = null
         _leaderProfile.value = null
         _staffUsers.value = emptyList()
+
+        // Сбрасываем активные временные сессии проверок при выходе
+        _activeCleanlinessEventId.value = null
+        _cleanlinessStartedAt.value = null
+        _cleanlinessSessionScores.value = emptyMap()
+        _cleanlinessSessionScoreTimes.clear()
+        _cleanlinessSessionError.value = null
+
+        _quietStartedAt.value = null
+        _quietSessionIncidents.value = emptyList()
+        _quietSessionIncidentTimes.clear()
+        _quietSessionError.value = null
         // Важно: неотправленные проверки НЕ удаляем, они остаются в Room!
+    }
+
+    fun isDemoMode(): Boolean {
+        val token = LeaderApiService.getDeviceToken(getApplication())
+        return token?.startsWith("demo-token") == true
+    }
+
+    /**
+     * Проверка, активна ли комната (не на ремонте/не закрыта) согласно профилю старосты с сервера.
+     */
+    fun isRoomActive(roomNumber: Int): Boolean {
+        val profileRooms = _leaderProfile.value?.rooms
+        if (profileRooms.isNullOrEmpty()) return true
+        val matched = profileRooms.find { it.number == roomNumber.toString() }
+        return matched?.active ?: true
+    }
+
+    /**
+     * Валидация регламентного времени начала обхода тишины (23:00–23:59).
+     */
+    fun validateQuietStartTime(): String? {
+        if (isDemoMode()) return null
+        val profile = _leaderProfile.value
+        val rules = profile?.rules ?: LeaderRules()
+        val zoneId = try {
+            ZoneId.of(profile?.timezone?.ifBlank { null } ?: "Europe/Moscow")
+        } catch (e: Exception) {
+            ZoneId.of("Europe/Moscow")
+        }
+        val now = ZonedDateTime.now(zoneId).toLocalTime()
+        val start = try { LocalTime.parse(rules.quietStart) } catch (e: Exception) { LocalTime.of(23, 0) }
+        val end = try { LocalTime.parse(rules.quietLastStart) } catch (e: Exception) { LocalTime.of(23, 59) }
+
+        if (now.isBefore(start)) {
+            val nowStr = now.format(DateTimeFormatter.ofPattern("HH:mm"))
+            return "Обход тишины по регламенту начинается в ${rules.quietStart} (сейчас $nowStr по времени ${profile?.timezone ?: "МСК"})."
+        }
+        if (now.isAfter(end)) {
+            val nowStr = now.format(DateTimeFormatter.ofPattern("HH:mm"))
+            return "Время начала обхода тишины истекло (окно старта: ${rules.quietStart}–${rules.quietLastStart}, сейчас: $nowStr)."
+        }
+        return null
     }
 
     // --- 1. ПРОВЕРКА СОЕДИНЕНИЯ НА ВАХТЕ (GET /ping) ---
@@ -532,6 +619,19 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
                     _assignedFloor.value = profile.floor
                     _selectedFloor.value = profile.floor
                     _inspectorName.value = profile.user.fullName
+                    val role = when (profile.position.lowercase()) {
+                        "commander", "floor_commander" -> StaffRole.FLOOR_COMMANDER
+                        "elder" -> StaffRole.FLOOR_HEAD
+                        "initiative" -> StaffRole.INITIATIVE_GROUP
+                        else -> StaffRole.FLOOR_HEAD
+                    }
+                    _currentRole.value = role
+                    prefs.edit()
+                        .putString("inspector_name", profile.user.fullName)
+                        .putString("staff_role", role.name)
+                        .putInt("assigned_floor", profile.floor)
+                        .apply()
+
                     syncProfileRoomsToDatabase(profile)
                     updateStaffUsersFromProfile(profile)
                     _lastPingResult.value = "Связь есть. Время сервера: ${result.serverTime}"
@@ -565,9 +665,9 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
                     if (total == 0) {
                         _lastSyncSuccessMessage.value = "Очередь проверок пуста, всё синхронизировано."
                     } else {
-                        val accepted = result.results.count { it.status == "accepted" }
-                        val dup = result.results.count { it.status == "duplicate" }
-                        val rejected = result.results.count { it.status == "rejected" }
+                        val accepted = result.results.count { it.status.equals("accepted", ignoreCase = true) }
+                        val dup = result.results.count { it.status.equals("duplicate", ignoreCase = true) }
+                        val rejected = result.results.count { it.status.equals("rejected", ignoreCase = true) }
                         _lastSyncSuccessMessage.value = "Отправлено проверок: $total (Принято: $accepted, Дубли: $dup, Отклонено: $rejected)"
                     }
                     _requiresReAuth.value = false
@@ -597,20 +697,51 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- 3. СЕССИЯ ПРОВЕРКИ ЧИСТОТЫ ---
 
-    fun startCleanlinessSession() {
+    fun startCleanlinessSession(resumeExisting: Boolean = false) {
+        if (_quietStartedAt.value != null) {
+            _cleanlinessSessionError.value = "Сначала завершите или отмените активный обход тишины."
+            return
+        }
+
+        if (resumeExisting) {
+            val existing = todayCleanlinessInspection.value
+            if (existing != null) {
+                _activeCleanlinessEventId.value = existing.eventId
+                _cleanlinessStartedAt.value = existing.startedAt
+
+                // Предзаполняем оценки из уже сохраненных записей за эту дату
+                val currentRecords = cleanlinessRecords.value.filter { it.floor == _assignedFloor.value }
+                val scoreMap = mutableMapOf<Int, Pair<Int, String>>()
+                for (rec in currentRecords) {
+                    val score = when (rec.status) {
+                        "Чисто" -> 0
+                        "Немного грязно" -> 1
+                        "Умеренно грязно" -> 2
+                        "Грязно" -> 3
+                        else -> 4
+                    }
+                    scoreMap[rec.roomNumber] = (score to rec.comment)
+                }
+                _cleanlinessSessionScores.value = scoreMap
+                _cleanlinessSessionError.value = null
+                return
+            }
+        }
+
+        _activeCleanlinessEventId.value = null
         _cleanlinessStartedAt.value = LeaderApiService.currentIsoTime()
         _cleanlinessSessionScores.value = emptyMap()
+        _cleanlinessSessionScoreTimes.clear()
         _cleanlinessSessionError.value = null
     }
 
     fun recordCleanlinessRoomScore(roomNumber: Int, score: Int, comment: String) {
-        val trimmedComment = comment.take(500)
-        val current = _cleanlinessSessionScores.value.toMutableMap()
-        current[roomNumber] = (score to trimmedComment)
-        _cleanlinessSessionScores.value = current
-
-        // Также сохраняем в локальную таблицу CleanlinessRecord для обычного интерфейса и отчетов
-        val room = allRooms.value.find { it.roomNumber == roomNumber }
+        val room = allRooms.value.find { it.roomNumber == roomNumber } ?: DormRoom(
+            roomNumber = roomNumber,
+            floor = roomNumber / 100,
+            wing = if (roomNumber % 100 <= 15) "Северная (00–15)" else "Южная (16–34)",
+            capacity = 4
+        )
         val statusStr = when (score) {
             0 -> "Чисто"
             1 -> "Немного грязно"
@@ -618,17 +749,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
             3 -> "Грязно"
             else -> "Очень грязно"
         }
-        val record = CleanlinessRecord(
-            date = _selectedDate.value,
-            roomNumber = roomNumber,
-            floor = room?.floor ?: (roomNumber / 100),
-            status = statusStr,
-            comment = trimmedComment,
-            inspectorName = currentInspectorLabel()
-        )
-        viewModelScope.launch {
-            repository.saveCleanlinessRecord(record)
-        }
+        saveRoomCleanliness(room, statusStr, comment)
     }
 
     fun finishCleanlinessSession(): Boolean {
@@ -644,8 +765,19 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val profile = _leaderProfile.value
+        val maxHours = profile?.rules?.cleanlinessMaxHours ?: 3
+        val startedOffset = runCatching { OffsetDateTime.parse(started) }.getOrNull()
+        if (startedOffset != null && !isDemoMode()) {
+            val durationMinutes = Duration.between(startedOffset, OffsetDateTime.now()).toMinutes()
+            if (durationMinutes > maxHours * 60) {
+                _cleanlinessSessionError.value = "Обход чистоты длился ${durationMinutes / 60} ч ${durationMinutes % 60} мин (максимум по регламенту: $maxHours ч). Сервер отклонит её с кодом cleanliness_too_long."
+                return false
+            }
+        }
+
         val floor = profile?.floor ?: _assignedFloor.value
         val profileRooms = profile?.rooms.orEmpty()
+        val finished = LeaderApiService.currentIsoTime()
 
         val roomItems = mutableListOf<InspectionRoomItem>()
         for ((roomNum, pair) in scores) {
@@ -656,13 +788,13 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
                 InspectionRoomItem(
                     roomId = roomId,
                     score = score,
-                    comment = comment
+                    comment = comment,
+                    markedAt = _cleanlinessSessionScoreTimes[roomNum] ?: finished
                 )
             )
         }
 
-        val finished = LeaderApiService.currentIsoTime()
-        val eventId = UUID.randomUUID().toString()
+        val eventId = _activeCleanlinessEventId.value ?: UUID.randomUUID().toString()
 
         val inspection = InspectionEntity(
             eventId = eventId,
@@ -678,38 +810,72 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
             repository.saveInspection(inspection)
         }
 
+        _activeCleanlinessEventId.value = null
         _cleanlinessStartedAt.value = null
         _cleanlinessSessionScores.value = emptyMap()
+        _cleanlinessSessionScoreTimes.clear()
         _cleanlinessSessionError.value = null
         return true
     }
 
     fun cancelCleanlinessSession() {
+        _activeCleanlinessEventId.value = null
         _cleanlinessStartedAt.value = null
         _cleanlinessSessionScores.value = emptyMap()
+        _cleanlinessSessionScoreTimes.clear()
         _cleanlinessSessionError.value = null
     }
 
     // --- 4. СЕССИЯ ПРОВЕРКИ ТИШИНЫ ---
 
-    fun startQuietSession() {
+    fun startQuietSession(force: Boolean = false) {
+        if (_cleanlinessStartedAt.value != null) {
+            _quietSessionError.value = "Сначала завершите или отмените активный обход чистоты."
+            return
+        }
+
+        if (todayQuietInspection.value != null) {
+            _quietSessionError.value = "Обход тишины за эту дату уже зафиксирован (по регламенту проводится строго 1 обход за вечер)."
+            return
+        }
+
+        if (!force) {
+            val timeError = validateQuietStartTime()
+            if (timeError != null) {
+                _quietSessionError.value = timeError
+                return
+            }
+        }
+
         val started = LeaderApiService.currentIsoTime()
         _quietStartedAt.value = started
         _quietSessionIncidents.value = emptyList()
+        _quietSessionIncidentTimes.clear()
         _quietSessionError.value = null
     }
 
     fun addQuietRoomViolation(roomNumber: Int, comment: String) {
+        if (!isRoomActive(roomNumber)) {
+            _quietSessionError.value = "Комната $roomNumber закрыта или на ремонте (неактивна в ИС)!"
+            return
+        }
+
         val trimmed = comment.take(500)
         val current = _quietSessionIncidents.value.toMutableList()
         current.removeAll { it.first == roomNumber }
         current.add(roomNumber to trimmed)
         _quietSessionIncidents.value = current
+        _quietSessionIncidentTimes[roomNumber] = LeaderApiService.currentIsoTime()
 
-        // Также добавляем в локальную таблицу SilenceIncidentRecord для интерфейса
+        // Привязываем дату к начатой сессии (чтобы переход через полночь не дробил проверку)
+        val sessionDate = _quietStartedAt.value?.take(10) ?: _selectedDate.value
         val currentTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+
+        // Проверяем существующую запись за эту дату, чтобы избежать дублирования id в базе
+        val existing = silenceIncidents.value.find { it.date == sessionDate && it.roomNumber == roomNumber }
         val record = SilenceIncidentRecord(
-            date = _selectedDate.value,
+            id = existing?.id ?: 0,
+            date = sessionDate,
             time = currentTime,
             roomNumber = roomNumber,
             floor = roomNumber / 100,
@@ -726,6 +892,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         val current = _quietSessionIncidents.value.toMutableList()
         current.removeAll { it.first == roomNumber }
         _quietSessionIncidents.value = current
+        _quietSessionIncidentTimes.remove(roomNumber)
     }
 
     fun finishQuietSession(): Boolean {
@@ -736,8 +903,27 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val profile = _leaderProfile.value
+        val rules = profile?.rules ?: LeaderRules()
+        if (!isDemoMode()) {
+            val zoneId = try {
+                ZoneId.of(profile?.timezone?.ifBlank { null } ?: "Europe/Moscow")
+            } catch (e: Exception) {
+                ZoneId.of("Europe/Moscow")
+            }
+            val now = ZonedDateTime.now(zoneId).toLocalTime()
+            val finishBy = try { LocalTime.parse(rules.quietFinishBy) } catch (e: Exception) { LocalTime.of(0, 30) }
+            val start = try { LocalTime.parse(rules.quietStart) } catch (e: Exception) { LocalTime.of(23, 0) }
+
+            // Если время после finishBy (00:30) и до start (23:00) следующего вечера
+            if (now.isAfter(finishBy) && now.isBefore(start)) {
+                _quietSessionError.value = "Обход тишины завершён позже регламента (${rules.quietFinishBy}). На вахте сервер отклонит проверку (quiet_late_finish)."
+                return false
+            }
+        }
+
         val floor = profile?.floor ?: _assignedFloor.value
         val profileRooms = profile?.rooms.orEmpty()
+        val finished = LeaderApiService.currentIsoTime()
 
         val roomItems = mutableListOf<InspectionRoomItem>()
         for ((roomNum, comment) in _quietSessionIncidents.value) {
@@ -747,12 +933,12 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
                 InspectionRoomItem(
                     roomId = roomId,
                     score = 1, // по ТЗ: для тишины только шумные комнаты, score = 1
-                    comment = comment
+                    comment = comment,
+                    markedAt = _quietSessionIncidentTimes[roomNum] ?: finished
                 )
             )
         }
 
-        val finished = LeaderApiService.currentIsoTime()
         val eventId = UUID.randomUUID().toString()
 
         val inspection = InspectionEntity(
@@ -771,6 +957,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
 
         _quietStartedAt.value = null
         _quietSessionIncidents.value = emptyList()
+        _quietSessionIncidentTimes.clear()
         _quietSessionError.value = null
         return true
     }
@@ -778,6 +965,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelQuietSession() {
         _quietStartedAt.value = null
         _quietSessionIncidents.value = emptyList()
+        _quietSessionIncidentTimes.clear()
         _quietSessionError.value = null
     }
 
@@ -871,7 +1059,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resetToToday() {
-        _selectedDate.value = LocalDate.now().toString()
+        _selectedDate.value = defaultWorkingDate()
     }
 
     private fun currentInspectorLabel(): String {
@@ -922,6 +1110,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
     // --- 2. МЕТОДЫ МОДУЛЯ «ЧИСТОТА И КУХНИ» ---
 
     fun saveRoomCleanliness(room: DormRoom, status: String, comment: String) {
+        if (!isRoomActive(room.roomNumber)) return
         if (!canEditFloor(room.floor)) return
         val existing = cleanlinessRecords.value.find { it.roomNumber == room.roomNumber }
         if (existing != null && !canModifyPastDeputyRecord(existing.inspectorName, _selectedDate.value)) {
@@ -938,6 +1127,21 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.saveCleanlinessRecord(record)
         }
+
+        // Если активна сессия обхода чистоты, также обновляем данные текущей инспекции
+        if (_cleanlinessStartedAt.value != null) {
+            val score = when (status) {
+                "Чисто" -> 0
+                "Немного грязно" -> 1
+                "Умеренно грязно" -> 2
+                "Грязно" -> 3
+                else -> 4
+            }
+            val currentMap = _cleanlinessSessionScores.value.toMutableMap()
+            currentMap[room.roomNumber] = score to comment.trim()
+            _cleanlinessSessionScores.value = currentMap
+            _cleanlinessSessionScoreTimes[room.roomNumber] = LeaderApiService.currentIsoTime()
+        }
     }
 
     fun resetRoomCleanliness(room: DormRoom) {
@@ -948,6 +1152,14 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             repository.deleteCleanlinessRecord(_selectedDate.value, room.roomNumber)
+        }
+
+        // Если активна сессия обхода чистоты, убираем оценку из текущей сессии
+        if (_cleanlinessStartedAt.value != null) {
+            val currentMap = _cleanlinessSessionScores.value.toMutableMap()
+            currentMap.remove(room.roomNumber)
+            _cleanlinessSessionScores.value = currentMap
+            _cleanlinessSessionScoreTimes.remove(room.roomNumber)
         }
     }
 
@@ -999,6 +1211,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         val numOnFloor = roomNumber % 100
         if (floor !in 2..5 || numOnFloor !in 0..34) return
         if (!canEditFloor(floor)) return
+        if (!isRoomActive(roomNumber)) return
         val currentTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
         val record = SilenceIncidentRecord(
             date = _selectedDate.value,
@@ -1019,6 +1232,7 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.deleteSilenceIncident(incident)
         }
+        removeQuietRoomViolation(incident.roomNumber)
     }
 
     // --- 4. МЕТОДЫ МОДУЛЯ «ГРАФИК ДЕЖУРСТВ ПО ЭТАЖУ» ---
@@ -1040,6 +1254,18 @@ class DormViewModel(application: Application) : AndroidViewModel(application) {
         if (!canEditDutySchedule(floor)) return
         viewModelScope.launch {
             repository.saveFloorDutyWeek(floor, records)
+        }
+    }
+
+    companion object {
+        fun defaultWorkingDate(): String {
+            val now = LocalTime.now()
+            val today = LocalDate.now()
+            return if (now.hour < 5) {
+                today.minusDays(1).toString()
+            } else {
+                today.toString()
+            }
         }
     }
 }

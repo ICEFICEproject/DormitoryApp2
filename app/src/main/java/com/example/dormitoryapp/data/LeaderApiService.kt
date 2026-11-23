@@ -67,6 +67,7 @@ object LeaderApiService {
             .edit()
             .remove(KEY_DEVICE_TOKEN)
             .remove(KEY_TOKEN_EXPIRES_AT)
+            .remove(KEY_CACHED_PROFILE)
             .apply()
     }
 
@@ -289,6 +290,8 @@ object LeaderApiService {
                         put("room_id", r.roomId)
                         put("score", r.score)
                         put("comment", r.comment)
+                        val markedAtValue = r.markedAt?.ifBlank { null } ?: insp.startedAt
+                        put("marked_at", markedAtValue)
                     }
                     roomsArr.put(rObj)
                 }
@@ -337,7 +340,37 @@ object LeaderApiService {
                     LeaderSyncResult.Unauthorized("Токен не действует, требуется вход")
                 }
                 422 -> {
-                    LeaderSyncResult.Error(code, "Пачка составлена неверно (ошибка приложения): $body")
+                    val humanMsg = try {
+                        val root = JSONObject(body)
+                        val mainMsg = root.optString("message", "")
+                        val errorsObj = root.optJSONObject("errors")
+                        val details = mutableListOf<String>()
+                        if (errorsObj != null) {
+                            val keys = errorsObj.keys()
+                            while (keys.hasNext()) {
+                                val k = keys.next()
+                                val arr = errorsObj.optJSONArray(k)
+                                if (arr != null) {
+                                    for (idx in 0 until arr.length()) {
+                                        details.add(arr.getString(idx))
+                                    }
+                                } else {
+                                    val errStr = errorsObj.optString(k)
+                                    if (errStr.isNotBlank()) details.add(errStr)
+                                }
+                            }
+                        }
+                        if (details.isNotEmpty()) {
+                            "$mainMsg\n${details.joinToString("\n") { "• $it" }}"
+                        } else if (mainMsg.isNotBlank()) {
+                            mainMsg
+                        } else {
+                            body
+                        }
+                    } catch (e: Exception) {
+                        body
+                    }
+                    LeaderSyncResult.Error(code, "Пачка составлена неверно (ошибка 422):\n$humanMsg")
                 }
                 else -> {
                     LeaderSyncResult.Error(code, "Ошибка сервера ($code): $body")

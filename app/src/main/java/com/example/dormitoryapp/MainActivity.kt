@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Badge
 import com.example.dormitoryapp.ui.components.WatchmanSyncDialog
+import com.example.dormitoryapp.data.InspectionEntity
 import com.example.dormitoryapp.data.ReportService
 import com.example.dormitoryapp.data.ShiftRankingSummary
 import com.example.dormitoryapp.data.StaffRole
@@ -176,10 +177,12 @@ fun DormMainApp(viewModel: DormViewModel) {
     val cleanlinessStartedAt by viewModel.cleanlinessStartedAt.collectAsState()
     val cleanlinessScores by viewModel.cleanlinessSessionScores.collectAsState()
     val cleanlinessSessionError by viewModel.cleanlinessSessionError.collectAsState()
+    val todayCleanlinessInspection by viewModel.todayCleanlinessInspection.collectAsState()
 
     val quietStartedAt by viewModel.quietStartedAt.collectAsState()
     val quietIncidents by viewModel.quietSessionIncidents.collectAsState()
     val quietSessionError by viewModel.quietSessionError.collectAsState()
+    val todayQuietInspection by viewModel.todayQuietInspection.collectAsState()
 
     var showWatchmanDialog by remember { mutableStateOf(false) }
 
@@ -379,18 +382,14 @@ fun DormMainApp(viewModel: DormViewModel) {
                         cleanlinessStartedAt = cleanlinessStartedAt,
                         cleanlinessScoresCount = cleanlinessScores.size,
                         cleanlinessSessionError = cleanlinessSessionError,
-                        onStartCleanlinessSession = { viewModel.startCleanlinessSession() },
+                        todayCleanlinessInspection = todayCleanlinessInspection,
+                        isRoomActive = { roomNum -> viewModel.isRoomActive(roomNum) },
+                        onStartCleanlinessSession = { viewModel.startCleanlinessSession(resumeExisting = false) },
+                        onResumeCleanlinessSession = { viewModel.startCleanlinessSession(resumeExisting = true) },
                         onFinishCleanlinessSession = { viewModel.finishCleanlinessSession() },
                         onCancelCleanlinessSession = { viewModel.cancelCleanlinessSession() },
                         onSaveRoomCleanliness = { room, status, comment ->
-                            val score = when (status) {
-                                "Чисто" -> 0
-                                "Немного грязно" -> 1
-                                "Умеренно грязно" -> 2
-                                "Грязно" -> 3
-                                else -> 4
-                            }
-                            viewModel.recordCleanlinessRoomScore(room.roomNumber, score, comment)
+                            viewModel.saveRoomCleanliness(room, status, comment)
                         },
                         onResetRoomCleanliness = { room ->
                             viewModel.resetRoomCleanliness(room)
@@ -413,6 +412,8 @@ fun DormMainApp(viewModel: DormViewModel) {
                         quietStartedAt = quietStartedAt,
                         quietIncidentsCount = quietIncidents.size,
                         quietSessionError = quietSessionError,
+                        todayQuietInspection = todayQuietInspection,
+                        isRoomActive = { roomNum -> viewModel.isRoomActive(roomNum) },
                         onStartQuietSession = { viewModel.startQuietSession() },
                         onFinishQuietSession = { viewModel.finishQuietSession() },
                         onCancelQuietSession = { viewModel.cancelQuietSession() },

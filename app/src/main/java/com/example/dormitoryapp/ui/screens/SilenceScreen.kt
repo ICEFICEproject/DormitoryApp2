@@ -49,6 +49,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.dormitoryapp.data.InspectionEntity
 import com.example.dormitoryapp.data.SilenceIncidentRecord
 import com.example.dormitoryapp.data.StaffRole
 import com.example.dormitoryapp.ui.theme.LocalIsDarkTheme
@@ -72,6 +73,8 @@ fun SilenceScreen(
     quietStartedAt: String? = null,
     quietIncidentsCount: Int = 0,
     quietSessionError: String? = null,
+    todayQuietInspection: InspectionEntity? = null,
+    isRoomActive: (Int) -> Boolean = { true },
     onStartQuietSession: (() -> Unit)? = null,
     onFinishQuietSession: (() -> Unit)? = null,
     onCancelQuietSession: (() -> Unit)? = null
@@ -125,28 +128,62 @@ fun SilenceScreen(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         if (quietStartedAt == null) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Официальный контроль тишины (23:00–23:59)",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp
-                                    )
-                                    Text(
-                                        text = "Фиксирует начало и конец проверки тишины для сервера",
-                                        fontSize = 11.sp,
-                                        color = Color.DarkGray
-                                    )
-                                }
-                                Button(
-                                    onClick = onStartQuietSession,
-                                    shape = RoundedCornerShape(8.dp)
+                            if (todayQuietInspection == null) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text("Начать обход", fontSize = 12.sp)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Официальный контроль тишины (23:00–23:59)",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                        Text(
+                                            text = "Фиксирует начало и конец проверки тишины для сервера",
+                                            fontSize = 11.sp,
+                                            color = Color.DarkGray
+                                        )
+                                    }
+                                    Button(
+                                        onClick = onStartQuietSession,
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text("Начать обход", fontSize = 12.sp)
+                                    }
+                                }
+                            } else {
+                                val startTimeStr = todayQuietInspection.startedAt.substringAfter('T').take(5)
+                                val finishTimeStr = todayQuietInspection.finishedAt.substringAfter('T').take(5)
+                                val roomItems = InspectionEntity.parseRoomsJson(todayQuietInspection.roomsJson)
+                                val statusText = when (todayQuietInspection.syncStatus) {
+                                    InspectionEntity.STATUS_ACCEPTED -> "✓ Принят сервером"
+                                    InspectionEntity.STATUS_DUPLICATE -> "Зафиксирован сервером"
+                                    else -> "Ожидает отправки на вахте"
+                                }
+
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = "✓ Обход тишины за сегодня проведён",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = if (isDark) Color(0xFFD1C4E9) else Color(0xFF512DA8)
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "Время: $startTimeStr – $finishTimeStr • " +
+                                                (if (roomItems.isEmpty()) "На этаже тихо" else "Шумящих комнат: ${roomItems.size}") +
+                                                " • $statusText",
+                                        fontSize = 11.sp,
+                                        color = if (isDark) Color.LightGray else Color.DarkGray
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "По регламенту ТЗ проверка тишины проводится строго один раз за вечер (окно 23:00–23:59). Повторный обход не требуется.",
+                                        fontSize = 10.sp,
+                                        color = if (isDark) Color.Gray else Color(0xFF757575)
+                                    )
                                 }
                             }
                         } else {
@@ -194,6 +231,16 @@ fun SilenceScreen(
                                     Text("Сброс", fontSize = 12.sp)
                                 }
                             }
+                        }
+
+                        if (quietStartedAt == null && !quietSessionError.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "✕ $quietSessionError",
+                                color = Color(0xFFC62828),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }
@@ -365,7 +412,9 @@ fun SilenceScreen(
         val enteredNum = roomInput.toIntOrNull()
         val floorOfRoom = if (enteredNum != null) enteredNum / 100 else 0
         val numOnFloor = if (enteredNum != null) enteredNum % 100 else -1
-        val isRoomValid = enteredNum != null && floorOfRoom in minFloor..maxFloor && numOnFloor in 0..34
+        val isRoomInRange = enteredNum != null && floorOfRoom in minFloor..maxFloor && numOnFloor in 0..34
+        val isRoomCurrentlyActive = enteredNum != null && isRoomActive(enteredNum)
+        val isRoomValid = isRoomInRange && isRoomCurrentlyActive
 
         AlertDialog(
             onDismissRequest = { showAddDialog = false },
@@ -393,8 +442,10 @@ fun SilenceScreen(
                         onValueChange = { roomInput = it.filter { ch -> ch.isDigit() }.take(3) },
                         label = { Text("Номер комнаты ($floorPrompt)") },
                         isError = roomInput.isNotBlank() && !isRoomValid,
-                        supportingText = if (roomInput.isNotBlank() && !isRoomValid) {
+                        supportingText = if (roomInput.isNotBlank() && !isRoomInRange) {
                             { Text("В общежитии комнаты на этаже только с 00 по 34!", color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
+                        } else if (roomInput.isNotBlank() && !isRoomCurrentlyActive) {
+                            { Text("Комната закрыта или на ремонте (неактивна в ИС)!", color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
                         } else null,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,

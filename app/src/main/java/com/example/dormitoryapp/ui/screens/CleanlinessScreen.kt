@@ -1,6 +1,7 @@
 package com.example.dormitoryapp.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -66,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Surface
 import com.example.dormitoryapp.data.CleanlinessRecord
 import com.example.dormitoryapp.data.DormRoom
+import com.example.dormitoryapp.data.InspectionEntity
 import com.example.dormitoryapp.data.KitchenDutyRecord
 import com.example.dormitoryapp.data.PenaltyPeriod
 import com.example.dormitoryapp.data.PenaltyUtils
@@ -147,7 +149,10 @@ fun CleanlinessScreen(
     cleanlinessStartedAt: String? = null,
     cleanlinessScoresCount: Int = 0,
     cleanlinessSessionError: String? = null,
+    todayCleanlinessInspection: InspectionEntity? = null,
+    isRoomActive: (Int) -> Boolean = { true },
     onStartCleanlinessSession: (() -> Unit)? = null,
+    onResumeCleanlinessSession: (() -> Unit)? = null,
     onFinishCleanlinessSession: (() -> Unit)? = null,
     onCancelCleanlinessSession: (() -> Unit)? = null
 ) {
@@ -190,7 +195,10 @@ fun CleanlinessScreen(
                 cleanlinessStartedAt = cleanlinessStartedAt,
                 cleanlinessScoresCount = cleanlinessScoresCount,
                 cleanlinessSessionError = cleanlinessSessionError,
+                todayCleanlinessInspection = todayCleanlinessInspection,
+                isRoomActive = isRoomActive,
                 onStartCleanlinessSession = onStartCleanlinessSession,
+                onResumeCleanlinessSession = onResumeCleanlinessSession,
                 onFinishCleanlinessSession = onFinishCleanlinessSession,
                 onCancelCleanlinessSession = onCancelCleanlinessSession
             )
@@ -231,12 +239,36 @@ private fun RoomCleanlinessSubScreen(
     cleanlinessStartedAt: String? = null,
     cleanlinessScoresCount: Int = 0,
     cleanlinessSessionError: String? = null,
+    todayCleanlinessInspection: InspectionEntity? = null,
+    isRoomActive: (Int) -> Boolean = { true },
     onStartCleanlinessSession: (() -> Unit)? = null,
+    onResumeCleanlinessSession: (() -> Unit)? = null,
     onFinishCleanlinessSession: (() -> Unit)? = null,
     onCancelCleanlinessSession: (() -> Unit)? = null
 ) {
     var penaltyPeriod by remember { mutableStateOf(PenaltyPeriod.ALL_TIME) }
-    val floorRooms = allRooms.filter { it.floor == selectedFloor }
+    val floorRooms = if (allRooms.any { it.floor == selectedFloor }) {
+        allRooms.filter { it.floor == selectedFloor }
+    } else {
+        // Гарантированная страховка: если база данных еще не загрузила комнаты этого этажа,
+        // генерируем стандартный список 35 комнат, чтобы экран никогда не оставался пустым!
+        (0..34).map { num ->
+            val roomNum = selectedFloor * 100 + num
+            val isFirstWing = num <= 15
+            val wingName = if (isFirstWing) "Северная (00–15)" else "Южная (16–34)"
+            val cap = when {
+                num == 34 -> 8
+                isFirstWing -> 4
+                else -> 6
+            }
+            DormRoom(
+                roomNumber = roomNum,
+                floor = selectedFloor,
+                wing = wingName,
+                capacity = cap
+            )
+        }
+    }
     val penaltyMap = remember(allRooms, allCleanlinessRecords, silenceIncidents, penaltyPeriod, selectedDate) {
         if (selectedDate.isNotBlank()) {
             PenaltyUtils.calculateStatsForPeriod(allRooms, allCleanlinessRecords, silenceIncidents, penaltyPeriod, selectedDate)
@@ -329,6 +361,33 @@ private fun RoomCleanlinessSubScreen(
             }
         }
 
+        var showRepeatCleanlinessDialog by remember { mutableStateOf(false) }
+
+        if (showRepeatCleanlinessDialog) {
+            AlertDialog(
+                onDismissRequest = { showRepeatCleanlinessDialog = false },
+                title = { Text("Повторный обход чистоты", fontWeight = FontWeight.Bold) },
+                text = {
+                    Text("Обход чистоты за сегодня уже зафиксирован. Вы уверены, что хотите начать новый отдельный обход $selectedFloor этажа?")
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showRepeatCleanlinessDialog = false
+                            onStartCleanlinessSession?.invoke()
+                        }
+                    ) {
+                        Text("Начать повторный обход")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRepeatCleanlinessDialog = false }) {
+                        Text("Отмена")
+                    }
+                }
+            )
+        }
+
         // Блок управления официальной проверкой чистоты (ИС «Цифровое общежитие»)
         if (canEditThisFloor && onStartCleanlinessSession != null) {
             Card(
@@ -342,28 +401,76 @@ private fun RoomCleanlinessSubScreen(
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     if (cleanlinessStartedAt == null) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                        if (todayCleanlinessInspection == null) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Официальная проверка чистоты",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp
+                                    )
+                                    Text(
+                                        text = "Зафиксирует точное время начала и конца для отчёта в ИС",
+                                        fontSize = 11.sp,
+                                        color = Color.DarkGray
+                                    )
+                                }
+                                Button(
+                                    onClick = onStartCleanlinessSession,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Начать обход", fontSize = 12.sp)
+                                }
+                            }
+                        } else {
+                            val startStr = todayCleanlinessInspection.startedAt.substringAfter('T').take(5)
+                            val finishStr = todayCleanlinessInspection.finishedAt.substringAfter('T').take(5)
+                            val roomCount = InspectionEntity.parseRoomsJson(todayCleanlinessInspection.roomsJson).size
+                            val isPending = todayCleanlinessInspection.syncStatus == InspectionEntity.STATUS_PENDING
+
+                            Column(modifier = Modifier.fillMaxWidth()) {
                                 Text(
-                                    text = "Официальная проверка чистоты",
+                                    text = if (isPending) "Обход чистоты сохранён в очереди" else "✓ Обход чистоты принят сервером",
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp
+                                    fontSize = 13.sp,
+                                    color = if (isPending) Color(0xFFE65100) else Color(0xFF2E7D32)
                                 )
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "Зафиксирует точное время начала и конца для отчёта в ИС",
+                                    text = if (isPending)
+                                        "Время: $startStr – $finishStr • Оценено: $roomCount комн. • Ожидает отправки на вахте"
+                                    else
+                                        "Время: $startStr – $finishStr • Успешно синхронизирован на вахте",
                                     fontSize = 11.sp,
                                     color = Color.DarkGray
                                 )
-                            }
-                            Button(
-                                onClick = onStartCleanlinessSession,
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Начать обход", fontSize = 12.sp)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (isPending && onResumeCleanlinessSession != null) {
+                                        Button(
+                                            onClick = onResumeCleanlinessSession,
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("Дополнить обход", fontSize = 12.sp)
+                                        }
+                                    }
+                                    OutlinedButton(
+                                        onClick = { showRepeatCleanlinessDialog = true },
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = if (isPending && onResumeCleanlinessSession != null) Modifier.weight(1f) else Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Повторный обход", fontSize = 12.sp)
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -417,6 +524,16 @@ private fun RoomCleanlinessSubScreen(
                             }
                         }
                     }
+
+                    if (cleanlinessStartedAt == null && !cleanlinessSessionError.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "✕ $cleanlinessSessionError",
+                            color = Color(0xFFC62828),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
         }
@@ -431,6 +548,21 @@ private fun RoomCleanlinessSubScreen(
         )
 
         Spacer(modifier = Modifier.height(6.dp))
+
+        if (currentRoomsList.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Комнаты $selectedFloor этажа загружаются...",
+                    fontSize = 14.sp,
+                    color = Color.Gray
+                )
+            }
+        }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -503,8 +635,9 @@ private fun RoomCleanlinessSubScreen(
                     elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 14.dp else 2.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
+                        val isRoomCurrentlyActive = isRoomActive(room.roomNumber)
                         val penaltyStats = penaltyMap[room.roomNumber] ?: RoomPenaltyStats(room.roomNumber, 0, 0, 0)
-                        val canEditThisRoom = canEditThisFloor && (rec == null || canModifyInspectorRecord(rec.inspectorName))
+                        val canEditThisRoom = canEditThisFloor && isRoomCurrentlyActive && (rec == null || canModifyInspectorRecord(rec.inspectorName))
                         val isLockedByDeputy = rec != null && !canModifyInspectorRecord(rec.inspectorName)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -551,6 +684,21 @@ private fun RoomCleanlinessSubScreen(
                                     fontSize = 16.sp,
                                     color = DarkTextColor
                                 )
+                                if (!isRoomCurrentlyActive) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        color = Color(0xFFFFEBEE),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "Ремонт / Закрыта",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFC62828),
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Surface(
                                     color = when {
@@ -574,7 +722,11 @@ private fun RoomCleanlinessSubScreen(
                                 }
                             }
                             val todayPoints = PenaltyUtils.getCleanlinessPoints(rec?.status)
-                            val statusLabel = if (rec != null) "${rec.status} (${todayPoints} б.)" else "Не проверена"
+                            val statusLabel = when {
+                                !isRoomCurrentlyActive -> "Не обслуживается (комната закрыта)"
+                                rec != null -> "${rec.status} (${todayPoints} б.)"
+                                else -> "Не проверена"
+                            }
                             Text(
                                 text = statusLabel,
                                 fontSize = 13.sp,

@@ -29,6 +29,9 @@ interface DormDao {
     @Query("SELECT COUNT(*) FROM dorm_rooms")
     suspend fun getRoomsCount(): Int
 
+    @Query("SELECT COUNT(*) FROM dorm_rooms WHERE floor = :floor")
+    suspend fun getRoomsCountByFloor(floor: Int): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRooms(rooms: List<DormRoom>)
 
